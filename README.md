@@ -9,7 +9,7 @@ Vote escrow (名字待定)，是一种 NFT，借鉴了 solidly ve
 
 `create_lock` 和 `create_lock_for` 锁定 Multi 创建 ve
 
-`balanceOfNFT` 计算 ve 的 vote power，是按时间线性降低一直到 0 的
+`balanceOfNFT` 计算 ve 的 vote power，是按时间线性降低到 0 的
 
 `balanceOfNFTAt` 计算某个块高上的 vote power
 
@@ -21,15 +21,21 @@ point 记录了偏移量 bias 和斜率 slope，还有块高和时间戳
 
 斜率是每秒下降的 vote power
 
-计算历史 vote power 时，先找到最近的 point，用 point 中记录的 bias 和 slope 来计算
+计算历史 vote power 时，先找到最近的 point，用 point 中记录的 bias 和 slope 来计算精确的 vote power
 
 ```
 balanceOfNFT = lastpoint.bias - slope * （block time - lastpoint.time）
 ```
 
-可以增加数量，延长锁定时间
+`increase_amount` 增加数量
 
-`deposit`, `merge`，`withdraw` 时都会执行 `_checkpoint`，更新自己和全局的记录
+`increase_unlock_time` 延长锁定时间
+
+`withdraw` 在锁定期结束后提出 Multi
+
+`merge` 合并同一个 owner 的两个 ve
+
+`deposit`, `increase_amount`, `increase_unlock_time`, `merge`，`withdraw` 都会执行 `_checkpoint`，更新自己和全局的记录
 
 任何人都可以通过 `checkpoint` 更新全局记录
 
@@ -52,7 +58,7 @@ voter 这块功能应该删掉
 ## 分手续费 bonus.sol
 admin 可以创建分红事件，转入 usdc
 
-token owner 可以 claim 分红奖励，根据 `balanceOfNFTAt` 和 `totalSupplyAt` 计算 token owner 占的比例
+token owner 可以 claim 分红奖励，根据 `balanceOfNFTAt` 和 `totalSupplyAt` 计算 token owner 占的比例, 领取 usdc
 
 ## 合约地址
 BSC testnet
