@@ -56,14 +56,12 @@ contract Bonus {
         uint blk; // block
     }
 
-    uint internal constant quarter  = 13 weeks; // 13 周分一次?
-
     /// @dev 分红 token，usdc
     address public bonusToken;
     /// @dev Ve nft
     address public _ve;
     /// @dev 分红记录
-    mapping(uint => Bonus) public bonus; // epoch -> Bonus, epoch 要保证连续
+    mapping(uint => Bonus) public bonusHistory; // epoch -> Bonus, epoch 要保证连续
     /// @dev 已领取过的 epoch
     mapping(uint => uint) public usersEpoch; // user -> epoch
 
@@ -80,6 +78,15 @@ contract Bonus {
         _;
     }
 
+    constructor (
+        address _ve_,
+        address bonusToken_
+    ) {
+        admin = msg.sender;
+        _ve = _ve_;
+        bonusToken = bonusToken_;
+    }
+
     function transferAdmin(address _admin) external onlyAdmin {
         admin = _admin;
     }
@@ -89,9 +96,9 @@ contract Bonus {
         // 需要先授权
         IERC20(bonusToken).safeTransferFrom(msg.sender, address(this), amount);
         latestEpoch += 1;
-        Bonus memory bns = Bonus(amount, block.timestamp, block.number);
-        bonus[latestEpoch] = bns;
-        emit LogCreateBonus(latestEpoch, bns);
+        Bonus memory bonus = Bonus(amount, block.timestamp, block.number);
+        bonusHistory[latestEpoch] = bonus;
+        emit LogCreateBonus(latestEpoch, bonus);
     }
 
     /// @dev 计算可以领取的数量
@@ -101,8 +108,8 @@ contract Bonus {
             return 0;
         }
         for (uint i = start; i <= latestEpoch; ++i) {
-            uint totalAmount = bonus[epoch].amount;
-            uint blk = bonus[epoch].block;
+            uint totalAmount = bonusHistory[epoch].amount;
+            uint blk = bonusHistory[epoch].block;
             // vote power 总量
             uint weight = ve(_ve).balanceOfNFTAt(tokenId, blk);
             // tokenId vote power
