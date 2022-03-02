@@ -41,7 +41,7 @@ balanceOfNFT = lastpoint.bias - slope * （block time - lastpoint.time）
 
 `deposit`, `increase_amount`, `increase_unlock_time`, `merge`，`withdraw` 都会执行 `_checkpoint`，更新 token owner 自己和全局的记录
 
-`_checkpoint` 根据 old LockedBalance 和 new LockedBalance 更新 `point_history` 和 `user_point_history`，还会提前设置未来 255 周（5 年）的 point，如果 5 年内没有任何人 `deposit`, `withdraw`, 或触发 `checkpoint`，五年后未过期的 ve 的 `balanceOfNFT` 就会归零，但还是可以 `withdraw`
+`_checkpoint` 根据 old LockedBalance 和 new LockedBalance 更新 `point_history` 和 `user_point_history`
 
 `totalSupply` 计算当前区块的总 vote power，**不是 NFT 的总个数，不是典型的 ERC721**
 
@@ -54,12 +54,140 @@ voter 这块功能应该删掉
     `voter` 是指 voter 合约，voter 合约有权设置 `voted`，`voted` 表示 tokenId 是否正在投票，正在投票的 NFT 不能转账
 
 
-## 分手续费 bonus.sol
-admin 可以创建分红事件，转入 usdc
 
-token owner 可以 claim 分红奖励，根据 `balanceOfNFTAt` 和 `totalSupplyAt` 计算 token owner 占的比例, 领取 usdc
+## 奖励合约对比
+### 1. ve 直接计算占比
+每个周期设置 bonusStart, bonusEnd 和 referenceTime  
+$bonusEnd < referenceTime$ (必须严格小于)   
+ve owner 只能在 bonusStart 和 bonusEnd 之间 claim 奖励  
+ve 的占比是 $portion = \frac{balanceOfNFTAt(tokenId, referenceTime)}{totalSupplyAt(referenceTime)}$
 
-## 合约地址
+*缺点*
+- bonusStart 到 bonusEnd 之间增加 vote power，会导致奖励总量不足
+- 奖励产生在锁定期之前
+
+### 2. ve 预先记录 power
+每个周期设置 claimPowerDeadline, referenceTime, bonusTime  
+$claimPowerDeadline < referenceTime$ (必须严格小于)  
+$referenceTime < bonusTime$  
+奖励合约记录每个 ve 的 vote power 和总的 vote power
+
+ve owner 需要在 claimPowerDeadline 之前 claimPower, 可以多次 claimPower  
+$power = balanceOfNFTAt(tokenId, referenceTime)$  
+同时更新 $totalPower = totalPower_{prev} + power$
+
+bonusTime 到了后可以 claim 奖励  
+占比是
+$$
+portion = \frac{power}{totalPower}
+$$
+
+*缺点*
+- 多一次 claimPower 操作
+
+### 3. master chef
+没有 NFT，直接锁入 ERC20  
+每个挖矿期开始前设置块奖励
+
+$$
+rewardPerBlock = \frac{总奖励}{锁定期块高 \times Multi.totalSupply}
+$$
+
+记录每股累积奖励 accRewardPerShare  
+记录每个用户存入的 ERC20 数量和债务  
+用户的债务等于 deposit 数量乘以 deposit 之前的每股累积奖励  
+havest 领取奖励，$reward = user.amount \times accRewardPerShare - user.debt$  
+需要预先存入足够的奖励币，奖励币不足时无法进行 deposit/withdraw 操作 （不能 mint 奖励币）
+
+每期结束后，用户把 ERC20 提出，再存到下一期的池子里
+
+*缺点*
+- 锁定期开始之前就要存入奖励
+- 每个挖矿期结束后要换个池子
+
+### 4. master chef + 两级奖励币
+每个锁定期发行一个特殊 ERC20 rewardToken  
+锁定期结束后按照 rewardToken 的份额分真正的奖励（USDT）
+
+*缺点*
+- 锁定期结束后要多发一个交易
+
+## 合约测试
 BSC testnet
 - Multi: 0x74e8e6eb31ef6970d2623a1c700cbe6f56f20f43
 - ve: 0xa88e49CfFd199f77cDbF0B5149E2660A34b8c3D1
+
+### Create lock
+tokenId 1
+lock amount 400000
+lock time 1645771379
+lock end 1648080000
+
+| 时间 | vote power | |
+| - | - | - |
+| 1642000000 | 1927955352612881600000 |
+| 1643000000 | 1610857432775236600000 |
+| 1644000000 | 1293759512937591600000 |
+| 1645770000 | 732496194824959950000 |
+| 1645771244 | 732101725012681919620 | start |
+| 1646000000 | 659563673262301600000 |
+| 1646500000 | 501014713343479100000 |
+| 1647000000 | 342465753424656600000 |
+| 1647500000 | 183916793505834100000 |
+| 1648000000 | 25367833587011600000 |
+| 1648079999 | 317097919837645 |
+| 1648080000 | 0 | end |
+| 1649000000 | 0 |
+
+##3 Increace lock amount
+tokenId 1
+lock amount increace 1000
+lock amount 41000
+lock time 1645771379
+lock end 1648080000
+锁定一个月
+
+| 时间 | vote power | |
+| - | - | - |
+| 1642000000 | 1976154236428208960000 |
+| 1643000000 | 1651128868594621960000 |
+| 1644000000 | 1326103500761034960000 |
+| 1645770000 | 750808599695585970000 |
+| 1645771244 | 750404268138000987772 | start |
+| 1646000000 | 676052765093860960000 |
+| 1646500000 | 513540081177067460000 |
+| 1647000000 | 351027397260273960000 |
+| 1647500000 | 188514713343480460000 |
+| 1648000000 | 26002029426686960000 |
+| 1648079999 | 325025367833587 |
+| 1648080000 | 0 | end |
+| 1649000000 | 0 |
+
+### increase unlock time
+tokenId 1
+increase time 5184000 （2个月）
+lock end 1650499200
+```
+lock end = old lock start * WEEK / WEEK + 5184000
+```
+延长了 4 个星期
+
+| 时间 | vote power | |
+| - | - | - |
+| 1642000000 | 2762455606291222630400 |
+| 1643000000 | 2437430238457635630400 |
+| 1644000000 | 2112404870624048630400 |
+| 1645770000 | 1537109969558599640400 |
+| 1645771244 | 1536705638001014658172 | start |
+| 1646000000 | 1462354134956874630400 |
+| 1646500000 | 1299841451040081130400 |
+| 1647000000 | 1137328767123287630400 |
+| 1647500000 | 974816083206494130400 |
+| 1648000000 | 812303399289700630400 |
+| 1648079999 | 786301694888381503987 |
+| 1648080000 | 786301369863013670400 | old end |
+| 1649000000 | 487278031456113630400 |
+| 1650000000 | 162252663622526630400 |
+| 1650499199 | 325025367833587 |
+| 1650499200 | 0 | new end |
+| 1651000000 | 0 |
