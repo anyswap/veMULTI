@@ -105,12 +105,13 @@ havest 领取奖励，$reward = user.amount \times accRewardPerShare - user.debt
 - 锁定期开始之前就要存入奖励
 - 每个挖矿期结束后要换个池子
 
-### 4. master chef + 两级奖励币
-每个锁定期发行一个特殊 ERC20 rewardToken  
-锁定期结束后按照 rewardToken 的份额分真正的奖励（USDT）
+### 4. master chef + reward ticket
+每个锁定期发行一个特殊 ERC20 reward ticket  
+reward ticket 不用 transfer，直接 mint，allocPoint 可以随便写  
+锁定期结束后按照 reward ticket 的份额分真正的奖励（USDT）
 
 *缺点*
-- 锁定期结束后要多发一个交易
+- 锁定期结束后要多发一个交易换奖励
 
 ## 合约测试
 BSC testnet
