@@ -13,7 +13,7 @@ LockedBalance 记录锁定的数量和结束时间, ve 和 LockedBalance 一一�
 
 `balanceOfNFT` 计算 ve 的 vote power，是按时间线性降低到 0 的
 
-`balanceOfNFTAt` 计算某个块高上的 vote power
+`balanceOfNFTAt` 计算某个块高上的 vote power, **不能查询历史块高的 vote power**
 
 `point_history` 和 `user_point_history` 记录了全局和每个 ve 的历史记录，对齐到 week，可以计算每个历史块高上的 `balanceOfNFT`
 
@@ -45,28 +45,18 @@ balanceOfNFT = lastpoint.bias - slope * （block time - lastpoint.time）
 
 `totalSupply` 计算当前区块的总 vote power，**不是 NFT 的总个数，不是典型的 ERC721**
 
-`totalSupplyAt` 计算历史上某个块高的总 vote power
+`totalSupplyAt` 计算历史上某个块高的总 vote power, **不能查询历史块高的 total vote power**
 
-`totalSupplyAtT` 计算历史上某个时刻的总 vote power，时刻可以不是块高度，也可以是未来5年内预期的总 vote power
+`totalSupplyAtT` 计算某个时刻的总 vote power, **不能查询历史上的 total vote power**
 
-voter 这块功能应该删掉
+voter 这块功能不需要
 
     `voter` 是指 voter 合约，voter 合约有权设置 `voted`，`voted` 表示 tokenId 是否正在投票，正在投票的 NFT 不能转账
 
 
 
-## 奖励合约对比
-### 1. ve 直接计算占比
-每个周期设置 bonusStart, bonusEnd 和 referenceTime  
-$bonusEnd < referenceTime$ (必须严格小于)   
-ve owner 只能在 bonusStart 和 bonusEnd 之间 claim 奖励  
-ve 的占比是 $portion = \frac{balanceOfNFTAt(tokenId, referenceTime)}{totalSupplyAt(referenceTime)}$
-
-*缺点*
-- bonusStart 到 bonusEnd 之间增加 vote power，会导致奖励总量不足
-- 奖励产生在锁定期之前
-
-### 2. ve 预先记录 power
+## 奖励合约
+### 1. 按照 ve 分配
 每个周期设置 claimPowerDeadline, referenceTime, bonusTime  
 $claimPowerDeadline < referenceTime$ (必须严格小于)  
 $referenceTime < bonusTime$  
@@ -85,30 +75,26 @@ $$
 *缺点*
 - 多一次 claimPower 操作
 
-### 3. master chef
-没有 NFT，直接锁入 ERC20  
-每个挖矿期开始前设置块奖励
+### 2. master chef + reward ticket
+没有 NFT  
+每个锁定期发行一个特殊 ERC20 reward ticket token  
+每秒奖励固定 ticket  
+reward ticket 不用 transfer, 直接 mint, 没有 allocPoint
 
-$$
-rewardPerBlock = \frac{总奖励}{锁定期块高 \times Multi.totalSupply}
-$$
-
-记录每股累积奖励 accRewardPerShare  
+记录每股累积奖励 accTicketPerShare  
 记录每个用户存入的 ERC20 数量和债务  
 用户的债务等于 deposit 数量乘以 deposit 之前的每股累积奖励  
-havest 领取奖励，$reward = user.amount \times accRewardPerShare - user.debt$  
-需要预先存入足够的奖励币，奖励币不足时无法进行 deposit/withdraw 操作 （不能 mint 奖励币）
+havest 领取奖励，$reward = user.amount \times accTicketPerShare - user.debt$  
 
 每期结束后，用户把 ERC20 提出，再存到下一期的池子里
 
-*缺点*
-- 锁定期开始之前就要存入奖励
-- 每个挖矿期结束后要换个池子
+锁定期结束后按照 ticket 所占份额分真正的奖励（USDT）
 
-### 4. master chef + reward ticket
-每个锁定期发行一个特殊 ERC20 reward ticket  
-reward ticket 不用 transfer，直接 mint，allocPoint 可以随便写  
-锁定期结束后按照 reward ticket 的份额分真正的奖励（USDT）
+- 随时可以 harvest 收取 ticket
+- convert 必须等到 convert time
+- withdraw 必须等到 lock end 取回 Multi
+- 允许 emergency withdraw, 但没有奖励？
+- 建议: harvest 时间 < convert 时间 < 锁币结束时间？
 
 *缺点*
 - 锁定期结束后要多发一个交易换奖励

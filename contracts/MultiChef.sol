@@ -192,9 +192,12 @@ contract MultiChef is BoringOwnable {
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
     event Harvest(address indexed user, uint256 indexed pid, uint256 amount);
-    event LogPoolAddition(uint256 indexed pid, uint256 allocPoint, IERC20 indexed lpToken, IRewarder indexed rewarder);
+    event LogPoolAddition(uint256 indexed pid, PoolInfo poolInfo, RewardInfo rewardInfo);
+    event LogCreateTicketToken(uint256 pid, address ticket);
     event LogSetPool(uint256 indexed pid, uint256 allocPoint, IRewarder indexed rewarder, bool overwrite);
-    event LogUpdatePool(uint256 indexed pid, uint64 lastRewardBlock, uint256 lpSupply, uint256 accSushiPerShare);
+    event LogUpdatePool(uint256 indexed pid, uint64 lastRewardTime, uint256 accTicketPerShare);
+    event LogAddReward(uint256 indexed pid, uint256 amount);
+    event LogConvertReward(address indexed user, uint256 indexed pid, uint256 amount, address indexed to);
     event LogInit();
 
     constructor() public {}
@@ -224,7 +227,7 @@ contract MultiChef is BoringOwnable {
                 revert(0, 0)
             }
         }
-        // emit
+        emit LogCreateTicketToken(pid, addr);
         return addr;
     }
 
@@ -233,7 +236,7 @@ contract MultiChef is BoringOwnable {
     /// @param endTime 锁定奖励结束时间.
     /// @param rewardToken 奖励代币.
     /// @param ticketConvertionTime 兑换 reward 开始时间
-    function add(uint256 startTime, uint256 endTime, address rewardToken, uint256 ticketConvertionTime) public onlyOwner {
+    function add(uint256 startTime, uint256 endTime, address rewardToken, uint256 ticketConvertionTime) external onlyOwner {
         require(startTime < endTime);
         require(block.timestamp.to128() < endTime);
 
@@ -244,10 +247,11 @@ contract MultiChef is BoringOwnable {
             endTime: endTime.to128()
         }));
 
-        address _rewardTicket = createTicketToken(poolInfo.length.sub(1));
+        uint pid = poolInfo.length.sub(1);
+        address _rewardTicket = createTicketToken();
         RewardInfo memory _rewardInfo = RewardInfo(IERC20(_rewardTicket), IERC20(rewardToken), ticketConvertionTime, 0);
         rewardInfo[poolInfo.length.sub(1)] = _rewardInfo;
-        // emit LogPoolAddition(lpToken.length.sub(1), allocPoint, _lpToken, _rewarder);
+        emit LogPoolAddition(pid, poolInfo[pid], rewardInfo[pid]);
     }
 
     /// @notice View function to see pending ticket on frontend.
@@ -283,7 +287,7 @@ contract MultiChef is BoringOwnable {
     /// @notice Update reward variables of the given pool.
     /// @param pid The index of the pool. See `poolInfo`.
     /// @return pool Returns the pool that was updated.
-    function updatePool(uint256 pid) public returns (PoolInfo memory pool) {
+    function updatePool(uint256 pid) external returns (PoolInfo memory pool) {
         pool = poolInfo[pid];
         if (block.number > pool.lastRewardTime) {
             uint256 time;
@@ -297,7 +301,7 @@ contract MultiChef is BoringOwnable {
 
             pool.lastRewardTime = block.timestamp.to128();
             poolInfo[pid] = pool;
-            //emit LogUpdatePool(pid, pool.lastRewardBlock, lpSupply, pool.accSushiPerShare);
+            emit LogUpdatePool(pid, pool.lastRewardTime.to64(), pool.accTicketPerShare);
         }
     }
 
@@ -305,7 +309,7 @@ contract MultiChef is BoringOwnable {
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount Multi token amount to deposit.
     /// @param to The receiver of `amount` deposit benefit.
-    function deposit(uint256 pid, uint256 amount, address to) public {
+    function deposit(uint256 pid, uint256 amount, address to) external {
         PoolInfo memory pool = updatePool(pid);
         UserInfo storage user = userInfo[pid][to];
 
@@ -322,8 +326,10 @@ contract MultiChef is BoringOwnable {
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount Multi token amount to withdraw.
     /// @param to Receiver of the LP tokens.
-    function withdraw(uint256 pid, uint256 amount, address to) public {
+    function withdraw(uint256 pid, uint256 amount, address to) external {
         PoolInfo memory pool = updatePool(pid);
+        /// @notice 锁币结束时间之前禁止提出, 除非 emergency withdraw 放弃奖励
+        require(block.timestamp >= pool.endTime);
         UserInfo storage user = userInfo[pid][msg.sender];
 
         // Effects
@@ -359,8 +365,10 @@ contract MultiChef is BoringOwnable {
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount LP token amount to withdraw.
     /// @param to Receiver of the LP tokens and SUSHI rewards.
-    function withdrawAndHarvest(uint256 pid, uint256 amount, address to) public {
+    function withdrawAndHarvest(uint256 pid, uint256 amount, address to) external {
         PoolInfo memory pool = updatePool(pid);
+        /// @notice 锁币结束时间之前禁止提出, 除非 emergency withdraw 放弃奖励
+        require(block.timestamp >= pool.endTime);
         UserInfo storage user = userInfo[pid][msg.sender];
         int256 accumulatedTicket = int256(user.amount.mul(pool.accTicketPerShare) / ACC_TICKET_PRECISION);
         uint256 _pendingTicket = accumulatedTicket.sub(user.ticketDebt).toUInt256();
@@ -381,7 +389,7 @@ contract MultiChef is BoringOwnable {
     /// @notice Withdraw without caring about rewards. EMERGENCY ONLY.
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param to Receiver of the LP tokens.
-    function emergencyWithdraw(uint256 pid, address to) public {
+    function emergencyWithdraw(uint256 pid, address to) external {
         UserInfo storage user = userInfo[pid][msg.sender];
         uint256 amount = user.amount;
         user.amount = 0;
@@ -394,47 +402,51 @@ contract MultiChef is BoringOwnable {
 
     /// @notice Add reward token for pid.
     /// Add reward before ticket convertion time.
+    /// 设想由官方账户执行, 但也允许其他任何人执行
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount 奖励数量.
-    function addReward(uint256 pid, uint256 amount) public {
+    function addReward(uint256 pid, uint256 amount) external {
+        /// @notice ticket convert time 开始后禁止增加奖励，防止混乱
+        /// 如果忘记添加奖励，可以另外设置一个合约，仍然按 ticket 份额分配奖励
+        require(block.timestamp < _rewardInfo.ticketConvertionTime);
         rewardInfo[pid].rewardToken.safeTransferFrom(msg.sender, address(this), amount);
         rewardInfo[pid].totalRewardAmount = rewardInfo[pid].totalRewardAmount.add(amount);
-        // emit
+        emit LogAddReward(pid, amount);
     }
 
     /// @notice Convert reward ticket to reward token.
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount 转化的 ticket 数量.
-    function convertReward(uint256 pid, uint256 amount, address to) public {
+    function convertReward(uint256 pid, uint256 amount, address to) external {
         RewardInfo _rewardInfo = rewardInfo[pid];
-        require(block.timestamp > _rewardInfo.ticketConvertionTime);
+        require(block.timestamp >= _rewardInfo.ticketConvertionTime);
         _rewardInfo.ticketToken.safeTransferFrom(msg.sender, address(this), amount);
-        // TODO 检查这行
+        /// @notice 计算 reward
         uint256 reward = _rewardInfo.totalRewardAmount.mul(amount).div(_rewardInfo.ticketToken.totalSupply());
         if (reward > 0) {
             _rewardInfo.rewardToken.safeTransfer(to, reward);
         }
-        // emit
+        emit LogConvertReward(msg.sender, pid, amount, to);
     }
 
     /// @notice Convert all reward ticket to reward token.
     /// @param pid The index of the pool. See `poolInfo`.
-    function convertAllReward(uint256 pid, address to) public {
+    function convertAllReward(uint256 pid, address to) external {
         RewardInfo _rewardInfo = rewardInfo[pid];
-        require(block.timestamp > _rewardInfo.ticketConvertionTime);
+        require(block.timestamp >= _rewardInfo.ticketConvertionTime);
         uint256 amount = _rewardInfo.ticketToken.balanceOf(msg.sender);
         _rewardInfo.ticketToken.safeTransferFrom(msg.sender, address(this), amount);
-        // TODO 检查这行
+        /// @notice 计算 reward
         uint256 reward = _rewardInfo.totalRewardAmount.mul(amount).div(_rewardInfo.ticketToken.totalSupply());
         if (reward > 0) {
             _rewardInfo.rewardToken.safeTransfer(to, reward);
         }
-        // emit
+        emit LogConvertReward(msg.sender, pid, amount, to);
     }
 
     /// @notice View function to see pending reward on frontend.
     /// @param pid The index of the pool. See `poolInfo`.
-    function pendingReward(uint256 pid) public view returns (uint256) {
+    function pendingReward(uint256 pid) external view returns (uint256) {
         RewardInfo _rewardInfo = rewardInfo[pid];
         uint256 amount = _rewardInfo.ticketToken.balanceOf(msg.sender);
         uint256 reward = _rewardInfo.totalRewardAmount.mul(amount).div(_rewardInfo.ticketToken.totalSupply());
