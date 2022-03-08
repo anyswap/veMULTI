@@ -146,7 +146,7 @@ contract MultiChef is BoringOwnable {
 
     /// @notice Info of each MCV2 pool.
     // /// `allocPoint` The amount of allocation points assigned to the pool.
-    /// Also known as the amount of SUSHI to distribute per block.
+    /// Also known as the amount of ticket to distribute per block.
     /// 每个锁币期对应一个 pool
     struct PoolInfo {
         uint128 accTicketPerShare;
@@ -162,21 +162,12 @@ contract MultiChef is BoringOwnable {
         uint256 totalRewardAmount;
     }
 
-    /// @notice Address of SUSHI contract.
-    // IERC20 public immutable SUSHI; // 不要了，改用 rewardTicket
     /// @notice Address of rewardInfo.
     mapping(uint256 => RewardInfo) public rewardInfo; // pid -> rewardInfo
-    // /// @notice The index of MCV2 master pool in MCV1.
-    // uint256 public immutable MASTER_PID;
-    // @notice The migrator contract. It has a lot of power. Can only be set through governance (owner).
     IMigratorChef public migrator;
 
     /// @notice Info of each MCV2 pool.
     PoolInfo[] public poolInfo;
-    // /// @notice Address of the LP token for each MCV2 pool.
-    // IERC20[] public lpToken;
-    /// @notice Address of each `IRewarder` contract in MCV2.
-    //IRewarder[] public rewarder; // 不要了
     /// @notice Multi token address;
     IERC20 public Multi;
 
@@ -305,7 +296,7 @@ contract MultiChef is BoringOwnable {
         }
     }
 
-    /// @notice Deposit Multi tokens to MCV2 for SUSHI allocation.
+    /// @notice Deposit Multi tokens to MCV2 for ticket allocation.
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount Multi token amount to deposit.
     /// @param to The receiver of `amount` deposit benefit.
@@ -343,7 +334,7 @@ contract MultiChef is BoringOwnable {
 
     /// @notice Harvest proceeds for transaction sender to `to`.
     /// @param pid The index of the pool. See `poolInfo`.
-    /// @param to Receiver of SUSHI rewards.
+    /// @param to Receiver of ticket rewards.
     function harvest(uint256 pid, address to) public {
         PoolInfo memory pool = updatePool(pid);
         UserInfo storage user = userInfo[pid][msg.sender];
@@ -364,7 +355,7 @@ contract MultiChef is BoringOwnable {
     /// @notice Withdraw LP tokens from MCV2 and harvest proceeds for transaction sender to `to`.
     /// @param pid The index of the pool. See `poolInfo`.
     /// @param amount LP token amount to withdraw.
-    /// @param to Receiver of the LP tokens and SUSHI rewards.
+    /// @param to Receiver of the LP tokens and ticket rewards.
     function withdrawAndHarvest(uint256 pid, uint256 amount, address to) external {
         PoolInfo memory pool = updatePool(pid);
         /// @notice 锁币结束时间之前禁止提出, 除非 emergency withdraw 放弃奖励
