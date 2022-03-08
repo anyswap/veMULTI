@@ -421,7 +421,7 @@ contract MultiChef is BoringOwnable {
         RewardInfo _rewardInfo = rewardInfo[pid];
         require(block.timestamp >= _rewardInfo.ticketConvertionTime);
         _rewardInfo.ticketToken.safeTransferFrom(msg.sender, address(this), amount);
-        /// @notice 计算 reward
+        /// @todo 检查计算
         uint256 reward = _rewardInfo.totalRewardAmount.mul(amount).div(_rewardInfo.ticketToken.totalSupply());
         if (reward > 0) {
             _rewardInfo.rewardToken.safeTransfer(to, reward);
@@ -436,7 +436,7 @@ contract MultiChef is BoringOwnable {
         require(block.timestamp >= _rewardInfo.ticketConvertionTime);
         uint256 amount = _rewardInfo.ticketToken.balanceOf(msg.sender);
         _rewardInfo.ticketToken.safeTransferFrom(msg.sender, address(this), amount);
-        /// @notice 计算 reward
+        /// @todo 检查计算
         uint256 reward = _rewardInfo.totalRewardAmount.mul(amount).div(_rewardInfo.ticketToken.totalSupply());
         if (reward > 0) {
             _rewardInfo.rewardToken.safeTransfer(to, reward);
@@ -449,6 +449,7 @@ contract MultiChef is BoringOwnable {
     function pendingReward(uint256 pid) external view returns (uint256) {
         RewardInfo _rewardInfo = rewardInfo[pid];
         uint256 amount = _rewardInfo.ticketToken.balanceOf(msg.sender);
+        /// @todo 检查计算
         uint256 reward = _rewardInfo.totalRewardAmount.mul(amount).div(_rewardInfo.ticketToken.totalSupply());
         return reward;
     }
