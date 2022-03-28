@@ -165,6 +165,7 @@ contract Reward {
         uint power = getPower(tokenId, epochId);
         uint totalPower = getTotalPower(epochId);
         uint last = userLastClaimBlock[tokenId][epochId];
+        last = last >= epoch.startBlock ? last : epoch.startBlock;
         uint reward = epoch.rewardPerBlock * (block.number - last) * power / totalPower / multiplier;
         return reward;
     }
@@ -180,6 +181,7 @@ contract Reward {
 
     function claimReward(uint tokenId, uint epochId) public {
         uint reward = pendingReward(tokenId, epochId);
+        require(reward > 0);
         userLastClaimBlock[tokenId][epochId] = block.number;
         IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
         emit LogClaimReward(tokenId, epochId, reward);
