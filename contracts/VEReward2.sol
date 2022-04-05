@@ -54,55 +54,31 @@ contract Reward {
     using SafeERC20 for IERC20;
 
     struct EpochInfo {
-        uint initTime;
-        uint initBlock;
-        uint startBlock; // 1号
-        uint endBlock; // 30号
-        uint rewardPerBlock; // totalReward * multiplier / (endBlock - startBlock)
-        uint totalReward;
-        uint snapshotBlock; // 随便几号, 小于1号, 1号~30号, 大于30号都可以
+        uint startTime;
+        uint endTime;
+        uint rewardPerSecond; // totalReward * RewardMultiplier / (endBlock - startBlock)
     }
-
-    /**
-    |---- start -------------- snapshot -------------- end ---->|
-    |------------ ^ interval 1--------------------------------->|
-    |----------------------------------- ^ interval 2 --------->|
-    - 总奖励在 start -> end 这段时间内均匀释放.
-
-    - interval 1 可以追加 power 提高收益,
-    别人追加 power 会降低自己的比重, 越早越频繁 claim 收益越好;
-
-    - interval 2 追加 power 不会提高收益,
-    收益和 claim 先后无关.
-
-    - 补充奖励？
-     */
 
     /// @dev Ve nft
     address public immutable _ve;
     /// @dev reward erc20 token, USDT
     address public immutable rewardToken;
-    /// @dev multiplier
-    uint immutable multiplier = 1000000;
+    /// @dev RewardMultiplier
+    uint immutable RewardMultiplier = 10000000;
+    /// @dev BlockMultiplier
+    uint immutable BlockMultiplier = 1000000000000000000;
 
-    /// @dev 奖励记录.
+    /// @dev reward epochs.
     EpochInfo[] public epochInfo;
-    /// @dev unexpired 未过期
+    /// @dev unexpired epochs.
     uint[] public unexpired;
-    /**
-    unexpired                   0   1   2
-                                100 101 102
-                                |   |   |
-    epochInfo   0   1   2   ... 100 101 102
-     */
+    /// @dev max unexpired array length
+    uint public immutable MaxLength = 360;
 
-    /// @dev 用户上一次领取的区块高度.
-    mapping(uint => mapping(uint => uint)) public userLastClaimBlock; // tokenId -> epoch id -> last claim block
-    /// @dev 已经领取的奖励
+    /// @dev user's last claim time.
+    mapping(uint => mapping(uint => uint)) public userLastClaimTime; // tokenId -> epoch id -> last claim timestamp
+    /// @dev total claimed reward in an epoch
     mapping(uint => uint) public totalClaimed; // epochInfo index -> total claimed amount
-
-    uint public immutable duration = 360 days; // 过期后剩余奖励归开发者，防止数组过长
-    uint public immutable averageBlockTime; // 出块时间, 单位是秒
 
     address public admin;
 
@@ -112,103 +88,207 @@ contract Reward {
     }
 
     event LogClaimReward(uint tokenId, uint epochId, uint reward);
+    event LogClaimReward(uint tokenId, uint startEpoch, uint endEpoch, uint reward);
+    event LogClaimReward(uint tokenId, uint reward);
     event LogAddEpoch(uint epochId, EpochInfo epochInfo);
+    event LogAddEpoch(uint startEpochId, uint endEpochId, uint startTime, uint endTime, uint epochLength, uint totalReward);
 
     constructor (
         address _ve_,
-        address rewardToken_,
-        uint averageBlockTime_
+        address rewardToken_
     ) {
         admin = msg.sender;
         _ve = _ve_;
         rewardToken = rewardToken_;
-        averageBlockTime = averageBlockTime_;
+        addCheckpoint();
+    }
+    
+    struct Point {
+        uint256 ts;
+        uint256 blk; // block
     }
 
+    Point[] public point_history;
+   
+    function addCheckpoint() internal {
+        point_history.push(Point(block.timestamp, block.number));
+    }
+    
+    function getBlockByTime(uint _time) public view returns (uint) {
+        // Binary search
+        uint _min = 0;
+        uint _max = point_history.length - 1; // asserting length >= 2
+        for (uint i = 0; i < 128; ++i) {
+            // Will be always enough for 128-bit numbers
+            if (_min >= _max) {
+                break;
+            }
+            uint _mid = (_min + _max + 1) / 2;
+            if (point_history[_mid].ts <= _time) {
+                _min = _mid;
+            } else {
+                _max = _mid - 1;
+            }
+        }
+
+        Point memory point0 = point_history[_min];
+        Point memory point1 = point_history[_min + 1];
+        // asserting point0.blk < point1.blk, point0.ts < point1.ts
+        uint block_slope; // dblock/dt
+        block_slope = (BlockMultiplier * (point1.blk - point0.blk)) / (point1.ts - point0.ts);
+        uint dblock = (block_slope * (_time - point0.ts)) / BlockMultiplier;
+        return point0.blk + dblock;
+    }
+
+    /// @notice get user's power at some point in the past
+    /// panic when epoch hasn't started
     function getPower(uint tokenId, uint epochId) view public returns (uint) {
         EpochInfo memory epoch = epochInfo[epochId];
-        if (block.number < epoch.snapshotBlock) {
-            return ve(_ve).balanceOfNFTAt(tokenId, averageBlockTime * (epoch.snapshotBlock - epoch.initBlock) + epoch.initTime);
-        } else {
-            return ve(_ve).balanceOfAtNFT(tokenId, epoch.snapshotBlock);
-        }
+        uint startBlock = getBlockByTime(epoch.startTime);
+        return ve(_ve).balanceOfAtNFT(tokenId, startBlock);
     }
 
+    /// @notice total power at some point in the past
+    /// panic when epoch hasn't started
     function getTotalPower(uint epochId) view public returns (uint) {
         EpochInfo memory epoch = epochInfo[epochId];
-        if (block.number < epoch.snapshotBlock) {
-            return ve(_ve).totalSupplyAtT(averageBlockTime * (epoch.snapshotBlock - epoch.initBlock) + epoch.initTime);
-        } else {
-            return ve(_ve).totalSupplyAt(epoch.snapshotBlock);
-        }
+        uint startBlock = getBlockByTime(epoch.startTime);
+        return ve(_ve).totalSupplyAt(startBlock);
     }
 
     function transferAdmin(address _admin) external onlyAdmin {
         admin = _admin;
     }
 
-    function addEpoch(uint startBlock, uint endBlock, uint totalReward, uint snapshotBlock) external onlyAdmin returns(uint) {
-        assert(block.number < endBlock && startBlock < endBlock);
-        uint rewardPerBlock = totalReward * multiplier / (endBlock - startBlock);
-        uint epochId = epochInfo.length;
-        epochInfo.push(EpochInfo(block.timestamp, block.number, startBlock, endBlock, rewardPerBlock, totalReward, snapshotBlock));
-        unexpired.push(epochId);
+    /// @notice add one epoch
+    function addEpoch(uint startTime, uint endTime, uint totalReward) external onlyAdmin returns(uint) {
+        assert(block.timestamp < endTime && startTime < endTime);
+        uint epochId = _addEpoch(startTime, endTime, totalReward);
+        addCheckpoint();
         checkExpired();
         emit LogAddEpoch(epochId, epochInfo[epochId]);
         return epochId;
     }
 
+    /// @notice add a batch of continuous epochs
+    function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint) {
+        assert(block.timestamp < endTime && startTime < endTime);
+        uint numberOfEpoch = (endTime + 1 - startTime) / epochLength;
+        uint _reward = totalReward / numberOfEpoch;
+        uint _start = startTime;
+        uint _end;
+        uint _epochId;
+        for (uint i = 0; i < numberOfEpoch; i++) {
+            _end = _start + epochLength;
+            _epochId = _addEpoch(_start, _end, _reward);
+            _start = _end;
+        }
+        addCheckpoint();
+        checkExpired();
+        emit LogAddEpoch(_epochId + 1 - numberOfEpoch, _epochId, startTime, endTime, epochLength, totalReward);
+        return (_epochId + 1 - numberOfEpoch, _epochId);
+    }
+
+    function _addEpoch(uint startTime, uint endTime, uint totalReward) internal returns(uint) {
+        uint rewardPerSecond = totalReward * RewardMultiplier / (endTime - startTime);
+        uint epochId = epochInfo.length;
+        epochInfo.push(EpochInfo(startTime, endTime, rewardPerSecond));
+        unexpired.push(epochId);
+        return epochId;
+    }
+
+    /// @notice set epoch reward
+    function setEpochReward(uint epochId, uint totalReward) external onlyAdmin {
+        require(block.timestamp < epochInfo[epochId].startTime);
+        epochInfo[epochId].rewardPerSecond = totalReward * RewardMultiplier / (epochInfo[epochId].endTime - epochInfo[epochId].startTime);
+    }
+
     /// @notice query pending reward by epoch
     function pendingReward(uint tokenId, uint epochId) public view returns (uint) {
-        // 过期的未过期的都可以
         EpochInfo memory epoch = epochInfo[epochId];
+        
+        uint last = userLastClaimTime[tokenId][epochId];
+        last = last >= epoch.startTime ? last : epoch.startTime;
+        if (last >= epoch.endTime) {
+            return 0;
+        }
+        
         uint power = getPower(tokenId, epochId);
         uint totalPower = getTotalPower(epochId);
-        uint last = userLastClaimBlock[tokenId][epochId];
-        last = last >= epoch.startBlock ? last : epoch.startBlock;
-        uint reward = epoch.rewardPerBlock * (block.number - last) * power / totalPower / multiplier;
+        
+        uint end = block.timestamp;
+        if (end > epoch.endTime) {
+            end = epoch.endTime;
+        }
+        
+        uint reward = epoch.rewardPerSecond * (end - last) * power / totalPower / RewardMultiplier;
         return reward;
     }
 
     /// @notice query all unexpired pending reward
-    function pendingReward(uint tokenId) external view returns (uint reward) {
-        // 只显示未过期的
+    function pendingReward(uint tokenId) public view returns (uint reward) {
         for (uint i = 0; i < unexpired.length; i++) {
             reward += pendingReward(tokenId, unexpired[i]);
         }
         return reward;
     }
 
+    /// @notice query pending reward in a range
+    function pendingReward(uint tokenId, uint startEpoch, uint endEpoch) public view returns (uint reward) {
+        require(startEpoch <= endEpoch);
+        for (uint i = startEpoch; i <= endEpoch; i++) {
+            reward += pendingReward(tokenId, i);
+        }
+        return reward;
+    }
+
+    /// @notice claim pending reward by epoch
     function claimReward(uint tokenId, uint epochId) public {
         uint reward = pendingReward(tokenId, epochId);
         require(reward > 0);
-        userLastClaimBlock[tokenId][epochId] = block.number;
+        totalClaimed[epochId] += reward;
+        userLastClaimTime[tokenId][epochId] = block.timestamp;
         IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
+        addCheckpoint();
         emit LogClaimReward(tokenId, epochId, reward);
     }
 
+    /// @notice claim all unexpired pending reward
     function claimReward(uint tokenId) external {
+        uint reward;
+        uint reward_i;
         for (uint i = 0; i < unexpired.length; i++) {
-            claimReward(tokenId, unexpired[i]);
+            reward_i = pendingReward(tokenId, unexpired[i]);
+            reward += reward_i;
+            totalClaimed[unexpired[i]] += reward_i;
         }
+        IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
+        addCheckpoint();
+        emit LogClaimReward(tokenId, reward);
+    }
+
+    /// @notice claim pending reward in a range
+    function claimReward(uint tokenId, uint startEpoch, uint endEpoch) external {
+        uint reward;
+        uint reward_i;
+        require(startEpoch <= endEpoch);
+        for (uint i = startEpoch; i <= endEpoch; i++) {
+            reward_i += pendingReward(tokenId, i);
+            reward += reward_i;
+            totalClaimed[i] += reward_i;
+        }
+        IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
+        addCheckpoint();
+        emit LogClaimReward(tokenId, startEpoch, endEpoch, reward);
     }
 
     function checkExpired() public onlyAdmin {
-        // 把 epochInfo 头部连续的过期 epoch 移除
-        // 缩短 epochInfo 长度
         uint firstUnexpired = 0;
-        EpochInfo memory epoch;
-        for (uint i = 0; i < unexpired.length; i++) {
-            epoch = epochInfo[i];
-            if (epoch.initTime + duration < block.timestamp) {
-                firstUnexpired++;
-            } else {
-                break;
-            }
-        }
-        if (firstUnexpired < 1) {
+        if (unexpired.length <= MaxLength) {
             return;
         }
+        firstUnexpired = unexpired.length - MaxLength;
+
         for (uint i = firstUnexpired; i < unexpired.length; i++) {
             unexpired[i-firstUnexpired] = unexpired[i];
         }
