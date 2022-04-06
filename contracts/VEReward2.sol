@@ -67,16 +67,16 @@ contract Reward {
     uint immutable RewardMultiplier = 10000000;
     /// @dev BlockMultiplier
     uint immutable BlockMultiplier = 1000000000000000000;
+    /// @dev Max epoch number user can claim
+    uint immutable MaxClaimNumber = 30;
 
     /// @dev reward epochs.
     EpochInfo[] public epochInfo;
-    /// @dev unexpired epochs.
-    uint[] public unexpired;
-    /// @dev max unexpired array length
-    uint public immutable MaxLength = 360;
 
     /// @dev user's last claim time.
-    mapping(uint => mapping(uint => uint)) public userLastClaimTime; // tokenId -> epoch id -> last claim timestamp
+    mapping(uint => mapping(uint => uint)) public userLastClaimTime; // tokenId -> epoch id -> last claim timestamp\
+    /// @dev user's last finished epoch.
+    mapping(uint => uint) public userLastFinishedEpoch;
     /// @dev total claimed reward in an epoch
     mapping(uint => uint) public totalClaimed; // epochInfo index -> total claimed amount
 
@@ -87,8 +87,6 @@ contract Reward {
         _;
     }
 
-    event LogClaimReward(uint tokenId, uint epochId, uint reward);
-    event LogClaimReward(uint tokenId, uint startEpoch, uint endEpoch, uint reward);
     event LogClaimReward(uint tokenId, uint reward);
     event LogAddEpoch(uint epochId, EpochInfo epochInfo);
     event LogAddEpoch(uint startEpochId, uint endEpochId, uint startTime, uint endTime, uint epochLength, uint totalReward);
@@ -100,7 +98,8 @@ contract Reward {
         admin = msg.sender;
         _ve = _ve_;
         rewardToken = rewardToken_;
-        addCheckpoint();
+        // add init point
+        point_history.push(Point(block.timestamp, block.number));
     }
     
     struct Point {
@@ -108,12 +107,19 @@ contract Reward {
         uint256 blk; // block
     }
 
+    /// @dev list of checkpoints, used in getBlockByTime
     Point[] public point_history;
    
+    /// @notice add checkpoint to point_history
     function addCheckpoint() internal {
-        point_history.push(Point(block.timestamp, block.number));
+        /// constructor guarantees point_history.length > 1
+        if (block.number - point_history[point_history.length - 1].blk > 100) {
+            point_history.push(Point(block.timestamp, block.number));
+        }
     }
     
+    /// @notice estimate last block number before given time
+    /// @return blockNumber
     function getBlockByTime(uint _time) public view returns (uint) {
         // Binary search
         uint _min = 0;
@@ -140,6 +146,10 @@ contract Reward {
         return point0.blk + dblock;
     }
 
+    function withdrawFee(uint amount) external onlyAdmin {
+        IERC20(rewardToken).safeTransfer(admin, amount);
+    }
+
     /// @notice get user's power at some point in the past
     /// panic when epoch hasn't started
     function getPower(uint tokenId, uint epochId) view public returns (uint) {
@@ -161,139 +171,131 @@ contract Reward {
     }
 
     /// @notice add one epoch
-    function addEpoch(uint startTime, uint endTime, uint totalReward) external onlyAdmin returns(uint) {
+    /// @return epochId
+    /// @return accurateTotalReward
+    function addEpoch(uint startTime, uint endTime, uint totalReward) external onlyAdmin returns(uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
-        uint epochId = _addEpoch(startTime, endTime, totalReward);
+        (uint epochId, uint accurateTotalReward) = _addEpoch(startTime, endTime, totalReward);
         addCheckpoint();
-        checkExpired();
         emit LogAddEpoch(epochId, epochInfo[epochId]);
-        return epochId;
+        return (epochId, accurateTotalReward);
     }
 
     /// @notice add a batch of continuous epochs
-    function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint) {
+    /// @return firstEpochId
+    /// @return lastEpochId
+    /// @return accurateTotalReward
+    function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
         uint numberOfEpoch = (endTime + 1 - startTime) / epochLength;
         uint _reward = totalReward / numberOfEpoch;
         uint _start = startTime;
         uint _end;
         uint _epochId;
+        uint accurateTR;
         for (uint i = 0; i < numberOfEpoch; i++) {
             _end = _start + epochLength;
-            _epochId = _addEpoch(_start, _end, _reward);
+            (_epochId, accurateTR) = _addEpoch(_start, _end, _reward);
             _start = _end;
         }
+        accurateTR = accurateTR * (endTime - startTime) / RewardMultiplier;
         addCheckpoint();
-        checkExpired();
-        emit LogAddEpoch(_epochId + 1 - numberOfEpoch, _epochId, startTime, endTime, epochLength, totalReward);
-        return (_epochId + 1 - numberOfEpoch, _epochId);
+        emit LogAddEpoch(_epochId + 1 - numberOfEpoch, _epochId, startTime, endTime, epochLength, accurateTR);
+        return (_epochId + 1 - numberOfEpoch, _epochId, accurateTR);
     }
 
-    function _addEpoch(uint startTime, uint endTime, uint totalReward) internal returns(uint) {
+    /// @notice add one epoch
+    /// @return epochId
+    /// @return accurateTotalReward
+    function _addEpoch(uint startTime, uint endTime, uint totalReward) internal returns(uint, uint) {
         uint rewardPerSecond = totalReward * RewardMultiplier / (endTime - startTime);
         uint epochId = epochInfo.length;
         epochInfo.push(EpochInfo(startTime, endTime, rewardPerSecond));
-        unexpired.push(epochId);
-        return epochId;
+        uint accurateTotalReward = (endTime - startTime) * rewardPerSecond / RewardMultiplier;
+        return (epochId, accurateTotalReward);
     }
 
     /// @notice set epoch reward
-    function setEpochReward(uint epochId, uint totalReward) external onlyAdmin {
+    function updateEpochReward(uint epochId, uint totalReward) external onlyAdmin {
         require(block.timestamp < epochInfo[epochId].startTime);
         epochInfo[epochId].rewardPerSecond = totalReward * RewardMultiplier / (epochInfo[epochId].endTime - epochInfo[epochId].startTime);
     }
 
     /// @notice query pending reward by epoch
-    function pendingReward(uint tokenId, uint epochId) public view returns (uint) {
+    /// @return pendingReward
+    /// @return finished
+    function pendingRewardSingle(uint tokenId, uint epochId) public view returns (uint, bool) {
         EpochInfo memory epoch = epochInfo[epochId];
+
+        uint startBlock = getBlockByTime(epoch.startTime);
+        uint power = ve(_ve).balanceOfAtNFT(tokenId, startBlock);
+        uint totalPower = ve(_ve).totalSupplyAt(startBlock);
         
         uint last = userLastClaimTime[tokenId][epochId];
         last = last >= epoch.startTime ? last : epoch.startTime;
         if (last >= epoch.endTime) {
-            return 0;
+            return (0, true);
         }
         
-        uint power = getPower(tokenId, epochId);
-        uint totalPower = getTotalPower(epochId);
-        
         uint end = block.timestamp;
+        bool finished = false;
         if (end > epoch.endTime) {
             end = epoch.endTime;
+            finished = true;
         }
         
         uint reward = epoch.rewardPerSecond * (end - last) * power / totalPower / RewardMultiplier;
-        return reward;
+        return (reward, finished);
     }
 
     /// @notice query all unexpired pending reward
     function pendingReward(uint tokenId) public view returns (uint reward) {
-        for (uint i = 0; i < unexpired.length; i++) {
-            reward += pendingReward(tokenId, unexpired[i]);
+        uint cnt = 0;
+        for (uint i = userLastFinishedEpoch[tokenId] + 1; i < epochInfo.length; i++) {
+            (uint reward_i,) = pendingRewardSingle(tokenId, i);
+            reward + reward_i;
+            cnt++;
+            if (cnt > MaxClaimNumber) {
+                break;
+            }
         }
         return reward;
-    }
-
-    /// @notice query pending reward in a range
-    function pendingReward(uint tokenId, uint startEpoch, uint endEpoch) public view returns (uint reward) {
-        require(startEpoch <= endEpoch);
-        for (uint i = startEpoch; i <= endEpoch; i++) {
-            reward += pendingReward(tokenId, i);
-        }
-        return reward;
-    }
-
-    /// @notice claim pending reward by epoch
-    function claimReward(uint tokenId, uint epochId) public {
-        uint reward = pendingReward(tokenId, epochId);
-        require(reward > 0);
-        totalClaimed[epochId] += reward;
-        userLastClaimTime[tokenId][epochId] = block.timestamp;
-        IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
-        addCheckpoint();
-        emit LogClaimReward(tokenId, epochId, reward);
     }
 
     /// @notice claim all unexpired pending reward
     function claimReward(uint tokenId) external {
+        require(msg.sender == ve(_ve).ownerOf(tokenId));
+        addCheckpoint();
         uint reward;
         uint reward_i;
-        for (uint i = 0; i < unexpired.length; i++) {
-            reward_i = pendingReward(tokenId, unexpired[i]);
+        uint cnt = 0;
+        uint lastFinishedEpoch = 0;
+        for (uint i = userLastFinishedEpoch[tokenId] + 1; i < epochInfo.length; i++) {
+            (uint reward_i, bool finished) = pendingRewardSingle(tokenId, i);
+            if (finished) {
+                lastFinishedEpoch = i + 1;
+            }
             reward += reward_i;
-            totalClaimed[unexpired[i]] += reward_i;
+            totalClaimed[i] += reward_i;
+            userLastClaimTime[tokenId][i] = block.timestamp;
+            if (cnt > MaxClaimNumber) {
+                break;
+            }
+        }
+        if (lastFinishedEpoch > 0) {
+            userLastFinishedEpoch[tokenId] = lastFinishedEpoch - 1;
         }
         IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
-        addCheckpoint();
         emit LogClaimReward(tokenId, reward);
     }
 
-    /// @notice claim pending reward in a range
-    function claimReward(uint tokenId, uint startEpoch, uint endEpoch) external {
-        uint reward;
-        uint reward_i;
-        require(startEpoch <= endEpoch);
-        for (uint i = startEpoch; i <= endEpoch; i++) {
-            reward_i += pendingReward(tokenId, i);
-            reward += reward_i;
-            totalClaimed[i] += reward_i;
-        }
-        IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
-        addCheckpoint();
-        emit LogClaimReward(tokenId, startEpoch, endEpoch, reward);
-    }
-
-    function checkExpired() public onlyAdmin {
-        uint firstUnexpired = 0;
-        if (unexpired.length <= MaxLength) {
-            return;
-        }
-        firstUnexpired = unexpired.length - MaxLength;
-
-        for (uint i = firstUnexpired; i < unexpired.length; i++) {
-            unexpired[i-firstUnexpired] = unexpired[i];
-        }
-        for (uint i = 0; i < firstUnexpired; i++) {
-            unexpired.pop();
-        }
+    /// @notice get last epoch info
+    /// @return startTime
+    /// @return endTime
+    /// @return totalReward
+    function getLastEpochInfo() public view returns (uint, uint, uint) {
+        EpochInfo memory epoch = epochInfo[epochInfo.length - 1];
+        uint totalReward = (epoch.endTime - epoch.startTime) * epoch.rewardPerSecond / RewardMultiplier;
+        return (epoch.startTime, epoch.endTime, totalReward);
     }
 }
