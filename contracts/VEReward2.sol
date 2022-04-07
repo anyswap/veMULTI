@@ -91,7 +91,7 @@ contract Reward {
 
     event LogClaimReward(uint tokenId, uint reward);
     event LogAddEpoch(uint epochId, EpochInfo epochInfo);
-    event LogAddEpoch(uint startEpochId, uint endEpochId, uint startTime, uint endTime, uint epochLength, uint totalReward);
+    event LogAddEpoch(uint startEpochId, uint endEpochId, uint startTime, uint endTime, uint epochLength);
 
     constructor (
         address _ve_,
@@ -200,9 +200,8 @@ contract Reward {
             (_epochId, accurateTR) = _addEpoch(_start, _end, _reward);
             _start = _end;
         }
-        accurateTR = accurateTR * (endTime - startTime) / RewardMultiplier;
         addCheckpoint();
-        emit LogAddEpoch(_epochId + 1 - numberOfEpoch, _epochId, startTime, endTime, epochLength, accurateTR);
+        emit LogAddEpoch(_epochId + 1 - numberOfEpoch, _epochId, startTime, _end, epochLength);
         return (_epochId + 1 - numberOfEpoch, _epochId, accurateTR);
     }
 
