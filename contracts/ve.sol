@@ -317,8 +317,9 @@ interface IERC20 {
 }
 
 struct Point {
-    int128 bias;
-    int128 slope; // # -dweight / dt
+    // 某个时刻/区块高度的权重
+    int128 bias; // 偏移量
+    int128 slope; // # -dweight / dt // 斜率
     uint ts;
     uint blk; // block
 }
@@ -362,12 +363,12 @@ contract ve is IERC721, IERC721Metadata {
 
     mapping(uint => uint) public ownership_change;
 
-    uint public epoch;
-    mapping(uint => Point) public point_history; // epoch -> unsigned point
-    mapping(uint => Point[1000000000]) public user_point_history; // user -> Point[user_epoch]
+    uint public epoch; // 全局 epoch, 全局 point history 的下标
+    mapping(uint => Point) public point_history; // epoch -> unsigned point // 全局 point 历史，总权重
+    mapping(uint => Point[1000000000]) public user_point_history; // user -> Point[user_epoch] // 用户 point 历史
 
-    mapping(uint => uint) public user_point_epoch;
-    mapping(uint => int128) public slope_changes; // time -> signed slope change
+    mapping(uint => uint) public user_point_epoch; // 用户最新 epoch, user point history 的下标
+    mapping(uint => int128) public slope_changes; // time -> signed slope change 全局斜率变化记录，单个点不需要
 
     mapping(uint => uint) public attachments;
     mapping(uint => bool) public voted;
@@ -764,8 +765,11 @@ contract ve is IERC721, IERC721Metadata {
 
     /// @notice Record global and per-user data to checkpoint
     /// @param _tokenId NFT token ID. No user checkpoint if 0
-    /// @param old_locked Pevious locked amount / end lock time for the user
-    /// @param new_locked New locked amount / end lock time for the user
+    /// @param old_locked Pevious locked amount / end lock time for the user // 老的 lock
+    /// @param new_locked New locked amount / end lock time for the user // 新的 lock
+    // deposit withdraw merge 都需要 checkpoint
+    // tokenId = 0 表示没有 tokenId 变化，只填充历史记录
+    // tokenId != 0 要更新用户和全局的最新 point
     function _checkpoint(
         uint _tokenId,
         LockedBalance memory old_locked,
@@ -777,6 +781,8 @@ contract ve is IERC721, IERC721Metadata {
         int128 new_dslope = 0;
         uint _epoch = epoch;
 
+        // 单个 nft 有变化
+        // 计算 u_new.bias, u_new.slope
         if (_tokenId != 0) {
             // Calculate slopes and biases
             // Kept at zero when they have to
@@ -802,9 +808,10 @@ contract ve is IERC721, IERC721Metadata {
             }
         }
 
+        // 更新全局，主要为了把 slope_changes 加到 point.slope
         Point memory last_point = Point({bias: 0, slope: 0, ts: block.timestamp, blk: block.number});
         if (_epoch > 0) {
-            last_point = point_history[_epoch];
+            last_point = point_history[_epoch]; // 全局最新 point
         }
         uint last_checkpoint = last_point.ts;
         // initial_last_point is used for extrapolation to calculate block number
@@ -813,6 +820,7 @@ contract ve is IERC721, IERC721Metadata {
         Point memory initial_last_point = last_point;
         uint block_slope = 0; // dblock/dt
         if (block.timestamp > last_point.ts) {
+            // 每秒多少个区块 * MULTIPLIER
             block_slope = (MULTIPLIER * (block.number - last_point.blk)) / (block.timestamp - last_point.ts);
         }
         // If last point is already recorded in this block, slope=0
@@ -820,7 +828,7 @@ contract ve is IERC721, IERC721Metadata {
 
         // Go over weeks to fill history and calculate what the current point is
         {
-            uint t_i = (last_checkpoint / WEEK) * WEEK;
+            uint t_i = (last_checkpoint / WEEK) * WEEK; // 从上一次 check point 开始
             for (uint i = 0; i < 255; ++i) {
                 // Hopefully it won't happen that this won't get used in 5 years!
                 // If it does, users will be able to withdraw but vote weight will be broken
@@ -857,6 +865,8 @@ contract ve is IERC721, IERC721Metadata {
         epoch = _epoch;
         // Now point_history is filled until t=now
 
+        // 单个 nft 有变化
+        // 计算全局最新 point
         if (_tokenId != 0) {
             // If last point was in this block, the slope change has been applied already
             // But in such case we have 0 slope(s)
@@ -870,9 +880,11 @@ contract ve is IERC721, IERC721Metadata {
             }
         }
 
+        // 记录全局最新 point
         // Record the changed point into history
         point_history[_epoch] = last_point;
 
+        // 单个 nft
         if (_tokenId != 0) {
             // Schedule the slope changes (slope is going down)
             // We subtract new_user_slope from [new_locked.end]
@@ -937,7 +949,8 @@ contract ve is IERC721, IERC721Metadata {
 
         address from = msg.sender;
         if (_value != 0 && deposit_type != DepositType.MERGE_TYPE) {
-            assert(IERC20(token).transferFrom(from, address(this), _value));
+            //assert(IERC20(token).transferFrom(from, address(this), _value));
+            assert(multi.transferFrom(from, address(this), _value));
         }
 
         emit Deposit(from, _tokenId, _value, _locked.end, deposit_type, block.timestamp);
@@ -1133,6 +1146,7 @@ contract ve is IERC721, IERC721Metadata {
     /// @param _tokenId NFT for lock
     /// @param _t Epoch time to return voting power at
     /// @return User voting power
+    /// 根据记录中最新的 point 预估将来的 power, 不能用来计算过去的 power
     function _balanceOfNFT(uint _tokenId, uint _t) internal view returns (uint) {
         uint _epoch = user_point_epoch[_tokenId];
         if (_epoch == 0) {
@@ -1175,6 +1189,7 @@ contract ve is IERC721, IERC721Metadata {
     /// @param _tokenId User's wallet NFT
     /// @param _block Block to calculate the voting power at
     /// @return Voting power
+    /// 计算过去的 power
     function _balanceOfAtNFT(uint _tokenId, uint _block) internal view returns (uint) {
         // Copying and pasting totalSupply code because Vyper cannot pass by
         // reference yet
@@ -1273,6 +1288,7 @@ contract ve is IERC721, IERC721Metadata {
     /// @notice Calculate total voting power at some point in the past
     /// @param _block Block to calculate the total voting power at
     /// @return Total voting power at `_block`
+    /// 计算过去的 supply
     function totalSupplyAt(uint _block) external view returns (uint) {
         assert(_block <= block.number);
         uint _epoch = epoch;
@@ -1301,7 +1317,7 @@ contract ve is IERC721, IERC721Metadata {
         output = string(abi.encodePacked(output, "locked_end ", toString(_locked_end), '</text><text x="10" y="80" class="base">'));
         output = string(abi.encodePacked(output, "value ", toString(_value), '</text></svg>'));
 
-        string memory json = Base64.encode(bytes(string(abi.encodePacked('{"name": "lock #', toString(_tokenId), '", "description": "Solidly locks, can be used to boost gauge yields, vote on token emission, and receive bribes", "image": "data:image/svg+xml;base64,', Base64.encode(bytes(output)), '"}'))));
+        string memory json = Base64.encode(bytes(string(abi.encodePacked('{"name": "lock #', toString(_tokenId), '", "description": "MultiDAO locks, can be used to boost gauge yields, vote on token emission, and receive bribes", "image": "data:image/svg+xml;base64,', Base64.encode(bytes(output)), '"}'))));
         output = string(abi.encodePacked('data:application/json;base64,', json));
     }
 
