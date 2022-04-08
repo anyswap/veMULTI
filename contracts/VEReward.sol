@@ -268,8 +268,6 @@ contract Reward {
         uint cnt = 0;
         complete = true;
         for (uint i = userFirstUnfinishedEpoch[tokenId]; i < epochInfo.length; i++) {
-            (uint reward_i,) = pendingRewardSingle(tokenId, i, epochInfo[i]);
-            reward + reward_i;
             cnt++;
             if (cnt == MaxQueryEpochNumber) {
                 if (i < epochInfo.length - 1) {
@@ -277,6 +275,11 @@ contract Reward {
                 }
                 break;
             }
+            if (block.timestamp < epochInfo[i].startTime) {
+                continue;
+            }
+            (uint reward_i,) = pendingRewardSingle(tokenId, i, epochInfo[i]);
+            reward + reward_i;
         }
         return (reward, complete);
     }
@@ -291,12 +294,17 @@ contract Reward {
         uint lastPointTime = point_history[point_history.length - 1].ts;
         uint u_firstUnfinished = 0;
         for (uint i = userFirstUnfinishedEpoch[tokenId]; i < epochInfo.length; i++) {
+            if (cnt == MaxClaimEpochNumber) {
+                if (i < epochInfo.length - 1) {
+                    complete = false;
+                }
+                break;
+            }
+            cnt++;
             epoch = epochInfo[i];
             if (block.timestamp < epoch.startTime) {
                 continue;
             }
-
-            cnt++;
 
             if (lastPointTime < epoch.startTime) {
                 // this branch runs 0 or 1 time
@@ -311,12 +319,6 @@ contract Reward {
             totalClaimed[i] += reward_i;
             if (reward_i > 0) {
                 userLastClaimTime[tokenId][i] = block.timestamp;
-            }
-            if (cnt == MaxClaimEpochNumber) {
-                if (i < epochInfo.length - 1) {
-                    complete = false;
-                }
-                break;
             }
         }
         if (u_firstUnfinished > 0) {
