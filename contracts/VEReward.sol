@@ -219,7 +219,7 @@ contract Reward {
             addCheckpoint();
         }
         emit LogAddEpoch(startTime, _end, epochLength, _epochId + 1 - numberOfEpoch);
-        return (_epochId + 1 - numberOfEpoch, _epochId, accurateTR);
+        return (_epochId + 1 - numberOfEpoch, _epochId, accurateTR * numberOfEpoch);
     }
 
     /// @notice add one epoch
