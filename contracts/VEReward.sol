@@ -186,6 +186,7 @@ contract Reward {
     /// @return accurateTotalReward
     function addEpoch(uint startTime, uint endTime, uint totalReward) external onlyAdmin returns(uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
+        assert(epochInfo[epochInfo.length - 1].endTime <= startTime);
         (uint epochId, uint accurateTotalReward) = _addEpoch(startTime, endTime, totalReward);
         uint lastPointTime = point_history[point_history.length - 1].ts;
         if (lastPointTime < block.timestamp) {
@@ -201,6 +202,7 @@ contract Reward {
     /// @return accurateTotalReward
     function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
+        assert(epochInfo[epochInfo.length - 1].endTime <= startTime);
         uint numberOfEpoch = (endTime + 1 - startTime) / epochLength;
         uint _reward = totalReward / numberOfEpoch;
         uint _start = startTime;
@@ -241,7 +243,7 @@ contract Reward {
     /// @return pendingReward
     /// @return finished
     /// panic when block.timestamp < epoch.startTime
-    function pendingRewardSingle(uint tokenId, uint epochId, EpochInfo memory epoch) internal view returns (uint, bool) {
+    function _pendingRewardSingle(uint tokenId, uint epochId, EpochInfo memory epoch) internal view returns (uint, bool) {
         uint startBlock = getBlockByTime(epoch.startTime);
         uint power = ve(_ve).balanceOfAtNFT(tokenId, startBlock);
         uint totalPower = ve(_ve).totalSupplyAt(startBlock);
@@ -263,68 +265,47 @@ contract Reward {
         return (reward, finished);
     }
 
+    function pendingRewardSingle(uint tokenId, uint epochId) public view returns (uint reward, bool finished) {
+        return _pendingRewardSingle(tokenId, epochId, epochInfo[epochId]);
+    }
+
     /// @notice query all unexpired pending reward
-    function pendingReward(uint tokenId) public view returns (uint reward, bool complete) {
-        uint cnt = 0;
-        complete = true;
-        for (uint i = userFirstUnfinishedEpoch[tokenId]; i < epochInfo.length; i++) {
-            cnt++;
-            if (cnt == MaxQueryEpochNumber) {
-                if (i < epochInfo.length - 1) {
-                    complete = false;
-                }
+    function pendingReward(uint tokenId, uint startEpoch, uint endEpoch) public view returns (uint reward, bool complete) {
+        for (uint i = startEpoch; i <= endEpoch; i++) {
+            if (block.timestamp < epochInfo[i].startTime) {
                 break;
             }
-            if (block.timestamp < epochInfo[i].startTime) {
-                continue;
-            }
-            (uint reward_i,) = pendingRewardSingle(tokenId, i, epochInfo[i]);
+            (uint reward_i,) = _pendingRewardSingle(tokenId, i, epochInfo[i]);
             reward + reward_i;
         }
         return (reward, complete);
     }
 
-    /// @notice claim all unexpired pending reward
-    function claimReward(uint tokenId) external returns (uint reward, bool complete) {
+    /// @notice claim reward in range
+    function claimReward(uint tokenId, uint startEpoch, uint endEpoch) external returns (uint reward, bool complete) {
         require(msg.sender == ve(_ve).ownerOf(tokenId));
-        point_history[point_history.length - 1];
-        uint cnt = 0;
-        complete = true;
+        require((endEpoch - startEpoch) <= MaxClaimEpochNumber, "claim range too large");
+        require(endEpoch < epochInfo.length, "claim out of range");
         EpochInfo memory epoch;
         uint lastPointTime = point_history[point_history.length - 1].ts;
-        uint u_firstUnfinished = 0;
-        for (uint i = userFirstUnfinishedEpoch[tokenId]; i < epochInfo.length; i++) {
-            if (cnt == MaxClaimEpochNumber) {
-                if (i < epochInfo.length - 1) {
-                    complete = false;
-                }
-                break;
-            }
-            cnt++;
+        for (uint i = startEpoch; i <= endEpoch; i++) {
             epoch = epochInfo[i];
             if (block.timestamp < epoch.startTime) {
-                continue;
+                break;
             }
-
             if (lastPointTime < epoch.startTime) {
                 // this branch runs 0 or 1 time
                 lastPointTime = block.timestamp;
                 addCheckpoint();
             }
-            (uint reward_i, bool finished) = pendingRewardSingle(tokenId, i, epoch);
-            if (!finished && u_firstUnfinished == 0) {
-                u_firstUnfinished = i + 1;
-            }
-            reward += reward_i;
-            totalClaimed[i] += reward_i;
+            (uint reward_i, bool finished) = _pendingRewardSingle(tokenId, i, epoch);
             if (reward_i > 0) {
+                reward += reward_i;
+                totalClaimed[i] += reward_i;
                 userLastClaimTime[tokenId][i] = block.timestamp;
             }
-        }
-        if (u_firstUnfinished > 0) {
-            userFirstUnfinishedEpoch[tokenId] = u_firstUnfinished - 1;
-            if (firstUnfinishedEpochId < u_firstUnfinished) {
-                firstUnfinishedEpochId = u_firstUnfinished;
+            if (!finished) {
+                break;
             }
         }
         IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
@@ -332,12 +313,37 @@ contract Reward {
         return (reward, complete);
     }
 
-    /// @notice get last epoch info
+    /// @notice get epoch by time
+    function getEpochIdByTime(uint _time) view public returns (uint) {
+        assert(epochInfo[0].startTime <= _time && epochInfo[epochInfo.length - 1].endTime >= _time);
+        if (_time > epochInfo[epochInfo.length - 1].startTime) {
+            return epochInfo.length - 1;
+        }
+        // Binary search
+        uint _min = 0;
+        uint _max = epochInfo.length - 1; // asserting length >= 2
+        for (uint i = 0; i < 128; ++i) {
+            // Will be always enough for 128-bit numbers
+            if (_min >= _max) {
+                break;
+            }
+            uint _mid = (_min + _max + 1) / 2;
+            if (epochInfo[_mid].startTime <= _time) {
+                _min = _mid;
+            } else {
+                _max = _mid - 1;
+            }
+        }
+        return _min;
+    }
+
+    /// @notice get current epoch info
     /// @return startTime
     /// @return endTime
     /// @return totalReward
-    function getFirstUnfinishedEpochInfo() public view returns (uint, uint, uint) {
-        EpochInfo memory epoch = epochInfo[firstUnfinishedEpochId];
+    function getCurrentEpochInfo() public view returns (uint, uint, uint) {
+        uint currentEpochId = getEpochIdByTime(block.timestamp);
+        EpochInfo memory epoch = epochInfo[currentEpochId];
         uint totalReward = (epoch.endTime - epoch.startTime) * epoch.rewardPerSecond / RewardMultiplier;
         return (epoch.startTime, epoch.endTime, totalReward);
     }
