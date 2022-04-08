@@ -295,6 +295,9 @@ contract Reward {
             if (block.timestamp < epoch.startTime) {
                 continue;
             }
+
+            cnt++;
+
             if (lastPointTime < epoch.startTime) {
                 // this branch runs 0 or 1 time
                 lastPointTime = block.timestamp;
