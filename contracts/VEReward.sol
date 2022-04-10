@@ -67,8 +67,6 @@ contract Reward {
     uint immutable RewardMultiplier = 10000000;
     /// @dev BlockMultiplier
     uint immutable BlockMultiplier = 1000000000000000000;
-    /// @dev Max epoch number user can query
-    uint immutable MaxQueryEpochNumber = 360;
     /// @dev Max epoch number user can claim
     uint immutable MaxClaimEpochNumber = 30;
 
@@ -77,10 +75,6 @@ contract Reward {
 
     /// @dev user's last claim time.
     mapping(uint => mapping(uint => uint)) public userLastClaimTime; // tokenId -> epoch id -> last claim timestamp\
-    /// @dev first unfinish epoch.
-    uint public firstUnfinishedEpochId;
-    /// @dev user's first unfinished epoch.
-    mapping(uint => uint) public userFirstUnfinishedEpoch;
     /// @dev total claimed reward in an epoch
     mapping(uint => uint) public totalClaimed; // epochInfo index -> total claimed amount
 
@@ -186,7 +180,9 @@ contract Reward {
     /// @return accurateTotalReward
     function addEpoch(uint startTime, uint endTime, uint totalReward) external onlyAdmin returns(uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
-        assert(epochInfo[epochInfo.length - 1].endTime <= startTime);
+        if (epochInfo.length > 0) {
+            require(epochInfo[epochInfo.length - 1].endTime > startTime);
+        }
         (uint epochId, uint accurateTotalReward) = _addEpoch(startTime, endTime, totalReward);
         uint lastPointTime = point_history[point_history.length - 1].ts;
         if (lastPointTime < block.timestamp) {
@@ -202,7 +198,9 @@ contract Reward {
     /// @return accurateTotalReward
     function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
-        assert(epochInfo[epochInfo.length - 1].endTime <= startTime);
+        if (epochInfo.length > 0) {
+            require(epochInfo[epochInfo.length - 1].endTime > startTime);
+        }
         uint numberOfEpoch = (endTime + 1 - startTime) / epochLength;
         uint _reward = totalReward / numberOfEpoch;
         uint _start = startTime;
@@ -270,19 +268,19 @@ contract Reward {
     }
 
     /// @notice query all unexpired pending reward
-    function pendingReward(uint tokenId, uint startEpoch, uint endEpoch) public view returns (uint reward, bool complete) {
+    function pendingReward(uint tokenId, uint startEpoch, uint endEpoch) public view returns (uint reward) {
         for (uint i = startEpoch; i <= endEpoch; i++) {
             if (block.timestamp < epochInfo[i].startTime) {
                 break;
             }
             (uint reward_i,) = _pendingRewardSingle(tokenId, i, epochInfo[i]);
-            reward + reward_i;
+            reward += reward_i;
         }
-        return (reward, complete);
+        return reward;
     }
 
     /// @notice claim reward in range
-    function claimReward(uint tokenId, uint startEpoch, uint endEpoch) external returns (uint reward, bool complete) {
+    function claimReward(uint tokenId, uint startEpoch, uint endEpoch) external returns (uint reward) {
         require(msg.sender == ve(_ve).ownerOf(tokenId));
         require((endEpoch - startEpoch) <= MaxClaimEpochNumber, "claim range too large");
         require(endEpoch < epochInfo.length, "claim out of range");
@@ -310,7 +308,7 @@ contract Reward {
         }
         IERC20(rewardToken).safeTransfer(ve(_ve).ownerOf(tokenId), reward);
         emit LogClaimReward(tokenId, reward);
-        return (reward, complete);
+        return reward;
     }
 
     /// @notice get epoch by time
@@ -337,14 +335,18 @@ contract Reward {
         return _min;
     }
 
-    /// @notice get current epoch info
+    /// @notice get epoch info
     /// @return startTime
     /// @return endTime
     /// @return totalReward
-    function getCurrentEpochInfo() public view returns (uint, uint, uint) {
-        uint currentEpochId = getEpochIdByTime(block.timestamp);
-        EpochInfo memory epoch = epochInfo[currentEpochId];
+    function getEpochInfo(uint epochId) public view returns (uint, uint, uint) {
+        EpochInfo memory epoch = epochInfo[epochId];
         uint totalReward = (epoch.endTime - epoch.startTime) * epoch.rewardPerSecond / RewardMultiplier;
         return (epoch.startTime, epoch.endTime, totalReward);
+    }
+
+    function getCurrentEpochId() public view returns (uint) {
+        uint currentEpochId = getEpochIdByTime(block.timestamp);
+        return currentEpochId;
     }
 }
