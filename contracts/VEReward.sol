@@ -173,7 +173,7 @@ contract Reward {
     function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
         if (epochInfo.length > 0) {
-            require(epochInfo[epochInfo.length - 1].endTime < startTime);
+            require(epochInfo[epochInfo.length - 1].endTime <= startTime);
         }
         uint numberOfEpoch = (endTime + 1 - startTime) / epochLength;
         uint _reward = totalReward / numberOfEpoch;
@@ -248,7 +248,21 @@ contract Reward {
         uint endEpoch;
     }
 
-    function claimReward(uint tokenId, Interval[] calldata intervals) external returns (uint reward) {
+    struct IntervalReward {
+        uint startEpoch;
+        uint endEpoch;
+        uint reward;
+    }
+
+    function claimRewardMany(uint[] calldata tokenIds, Interval[][] calldata intervals) public returns (uint[] memory rewards) {
+        rewards = new uint[] (tokenIds.length);
+        for (uint i = 0; i < tokenIds.length; i++) {
+            rewards[i] = claimReward(tokenIds[i], intervals[i]);
+        }
+        return rewards;
+    }
+
+    function claimReward(uint tokenId, Interval[] calldata intervals) public returns (uint reward) {
         for (uint i = 0; i < intervals.length; i++) {
             reward += claimReward(tokenId, intervals[i].startEpoch, intervals[i].endEpoch);
         }
@@ -406,21 +420,47 @@ contract Reward {
     }
 
     /// @notice get claimable reward
-    function pendingReward(uint tokenId) public view returns (RewardInfo[] memory rewards, uint total) {
+    function pendingReward(uint tokenId) public view returns (IntervalReward[] memory intervalRewards) {
         uint end = epochInfo.length - 1;
         if (block.timestamp <= epochInfo[epochInfo.length - 1].endTime) {
             end = getCurrentEpochId();
         }
         uint start = end > MaxQueryLength ? end - MaxQueryLength + 1 : 0;
-        rewards = new RewardInfo[](end - start + 1);
+        RewardInfo[] memory rewards = new RewardInfo[](end - start + 1);
         for (uint i = start; i <= end; i++) {
             if (block.timestamp < epochInfo[i].startTime) {
                 break;
             }
             (uint reward_i,) = pendingRewardSingle(tokenId, i);
-            total += reward_i;
             rewards[i]=RewardInfo(i, reward_i);
         }
-        return (rewards, total);
+
+        // omit zero rewards and convert to epoch list to intervals
+        IntervalReward[] memory intervalRewards_0 = new IntervalReward[] (rewards.length);
+        uint intv = 0;
+        uint intvStart = 0;
+        uint sum = 0;
+        for (uint i = 0; i < rewards.length; i++) {
+            if (rewards[i].reward == 0) {
+                if (i != start) {
+                    intervalRewards_0[intv] = IntervalReward(intvStart, i-1, sum);
+                    intv++;
+                    sum = 0;
+                }
+                intvStart = i + 1;
+                continue;
+            }
+            sum += rewards[i].reward;
+        }
+        intervalRewards_0[intv] = IntervalReward(intvStart, rewards.length-1, sum);
+
+        intervalRewards = new IntervalReward[] (intv+1);
+
+        // Copy interval array
+        for (uint i = 0; i < intv+1; i++) {
+            intervalRewards[i] = intervalRewards_0[i];
+        }
+        
+        return intervalRewards;
     }
 }
