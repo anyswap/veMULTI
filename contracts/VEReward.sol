@@ -155,7 +155,7 @@ contract Reward {
     function addEpoch(uint startTime, uint endTime, uint totalReward) external onlyAdmin returns(uint, uint) {
         assert(block.timestamp < endTime && startTime < endTime);
         if (epochInfo.length > 0) {
-            require(epochInfo[epochInfo.length - 1].endTime > startTime);
+            require(epochInfo[epochInfo.length - 1].endTime <= startTime);
         }
         (uint epochId, uint accurateTotalReward) = _addEpoch(startTime, endTime, totalReward);
         uint lastPointTime = point_history[point_history.length - 1].ts;
