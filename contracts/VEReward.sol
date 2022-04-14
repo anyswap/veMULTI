@@ -200,7 +200,7 @@ contract Reward {
     function _addEpoch(uint startTime, uint endTime, uint totalReward) internal returns(uint, uint) {
         uint rewardPerSecond = totalReward * RewardMultiplier / (endTime - startTime);
         uint epochId = epochInfo.length;
-        epochInfo.push(EpochInfo(startTime, endTime, rewardPerSecond, 0, 0));
+        epochInfo.push(EpochInfo(startTime, endTime, rewardPerSecond, 1, 1));
         uint accurateTotalReward = (endTime - startTime) * rewardPerSecond / RewardMultiplier;
         return (epochId, accurateTotalReward);
     }
@@ -216,8 +216,6 @@ contract Reward {
     /// @return finished
     /// panic when block.timestamp < epoch.startTime
     function _pendingRewardSingle(uint tokenId, uint lastClaimTime, EpochInfo memory epoch) internal view returns (uint, bool) {
-        uint power = ve(_ve).balanceOfAtNFT(tokenId, epoch.startBlock);
-        
         uint last = lastClaimTime >= epoch.startTime ? lastClaimTime : epoch.startTime;
         if (last >= epoch.endTime) {
             return (0, true);
@@ -229,16 +227,17 @@ contract Reward {
             end = epoch.endTime;
             finished = true;
         }
+        uint power = ve(_ve).balanceOfAtNFT(tokenId, epoch.startBlock);
         
         uint reward = epoch.rewardPerSecond * (end - last) * power / epoch.totalPower / RewardMultiplier;
         return (reward, finished);
     }
 
     function checkEpoch(uint epochId) public {
-        if (epochInfo[epochId].startBlock == 0) {
+        if (epochInfo[epochId].startBlock == 1) {
             epochInfo[epochId].startBlock = getBlockByTime(epochInfo[epochId].startTime);
         }
-        if (epochInfo[epochId].totalPower == 0) {
+        if (epochInfo[epochId].totalPower == 1) {
             epochInfo[epochId].totalPower = ve(_ve).totalSupplyAt(epochInfo[epochId].startBlock);
         }
     }
@@ -332,7 +331,7 @@ contract Reward {
         uint reward;
     }
 
-    uint constant MaxQueryLength = 255;
+    uint constant MaxQueryLength = 50;
 
     /// @notice get epoch info
     /// @return startTime
@@ -351,7 +350,7 @@ contract Reward {
 
     /// @notice only for external view functions
     /// Time beyond last checkpoint resulting in inconsistent estimated block number.
-    function getBlockByTime2(uint _time) public view returns (uint) {
+    function getBlockByTimeWithoutLastCheckpoint(uint _time) public view returns (uint) {
         if (point_history[point_history.length - 1].ts >= _time) {
             return getBlockByTime(_time);
         }
@@ -363,14 +362,14 @@ contract Reward {
     }
 
     function getEpochStartBlock(uint epochId) public view returns (uint) {
-        if (epochInfo[epochId].startBlock == 0) {
-            return getBlockByTime2(epochInfo[epochId].startTime);
+        if (epochInfo[epochId].startBlock == 1) {
+            return getBlockByTimeWithoutLastCheckpoint(epochInfo[epochId].startTime);
         }
         return epochInfo[epochId].startBlock;
     }
 
     function getEpochTotalPower(uint epochId) public view returns (uint) {
-        if (epochInfo[epochId].totalPower == 0) {
+        if (epochInfo[epochId].totalPower == 1) {
             uint blk = getEpochStartBlock(epochId);
             if (blk > block.number) {
                 return ve(_ve).totalSupplyAtT(epochInfo[epochId].startTime);
@@ -383,9 +382,9 @@ contract Reward {
     /// @notice get user's power at epochId
     function getUserPower(uint tokenId, uint epochId) view public returns (uint) {
         EpochInfo memory epoch = epochInfo[epochId];
-        uint blk = getBlockByTime2(epoch.startTime);
+        uint blk = getBlockByTimeWithoutLastCheckpoint(epoch.startTime);
         if (blk < block.number) {
-            ve(_ve).balanceOfAtNFT(tokenId, blk);
+            return ve(_ve).balanceOfAtNFT(tokenId, blk);
         }
         return ve(_ve).balanceOfNFTAt(tokenId, epochInfo[epochId].startTime);
     }
@@ -401,7 +400,7 @@ contract Reward {
         uint startBlock = getEpochStartBlock(epochId);
         uint totalPower = getEpochTotalPower(epochId);
         uint power = ve(_ve).balanceOfAtNFT(tokenId, startBlock);
-        
+
         uint last = userLastClaimTime[tokenId][epochId];
         last = last >= epoch.startTime ? last : epoch.startTime;
         if (last >= epoch.endTime) {
@@ -435,14 +434,14 @@ contract Reward {
             rewards[i]=RewardInfo(i, reward_i);
         }
 
-        // omit zero rewards and convert to epoch list to intervals
+        // omit zero rewards and convert epoch list to intervals
         IntervalReward[] memory intervalRewards_0 = new IntervalReward[] (rewards.length);
         uint intv = 0;
         uint intvStart = 0;
         uint sum = 0;
         for (uint i = 0; i < rewards.length; i++) {
             if (rewards[i].reward == 0) {
-                if (i != start) {
+                if (i != intvStart) {
                     intervalRewards_0[intv] = IntervalReward(intvStart, i-1, sum);
                     intv++;
                     sum = 0;
