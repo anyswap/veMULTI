@@ -373,8 +373,8 @@ contract ve is IERC721, IERC721Metadata {
     mapping(uint => bool) public voted;
     address public voter;
 
-    string constant public name = "veNFT";
-    string constant public symbol = "veNFT";
+    string constant public name = "veMULTI NFT";
+    string constant public symbol = "veMULTI";
     string constant public version = "1.0.0";
     uint8 constant public decimals = 18;
 
@@ -1301,7 +1301,7 @@ contract ve is IERC721, IERC721Metadata {
         output = string(abi.encodePacked(output, "locked_end ", toString(_locked_end), '</text><text x="10" y="80" class="base">'));
         output = string(abi.encodePacked(output, "value ", toString(_value), '</text></svg>'));
 
-        string memory json = Base64.encode(bytes(string(abi.encodePacked('{"name": "lock #', toString(_tokenId), '", "description": "Multi locks", "image": "data:image/svg+xml;base64,', Base64.encode(bytes(output)), '"}'))));
+        string memory json = Base64.encode(bytes(string(abi.encodePacked('{"name": "lock #', toString(_tokenId), '", "description": "veMULTI NFT", "image": "data:image/svg+xml;base64,', Base64.encode(bytes(output)), '"}'))));
         output = string(abi.encodePacked('data:application/json;base64,', json));
     }
 
