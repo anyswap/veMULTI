@@ -1,3 +1,7 @@
+/**
+ *Submitted for verification at BscScan.com on 2022-04-14
+*/
+
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.11;
 
@@ -134,6 +138,9 @@ contract Reward {
 
         Point memory point0 = point_history[_min];
         Point memory point1 = point_history[_min + 1];
+        if (_time == point0.ts) {
+            return point0.blk;
+        }
         // asserting point0.blk < point1.blk, point0.ts < point1.ts
         uint block_slope; // dblock/dt
         block_slope = (BlockMultiplier * (point1.blk - point0.blk)) / (point1.ts - point0.ts);
@@ -367,6 +374,9 @@ contract Reward {
             return getBlockByTime(_time);
         }
         Point memory point0 = point_history[point_history.length - 1];
+        if (_time == point0.ts) {
+            return point0.blk;
+        }
         uint block_slope;
         block_slope = (BlockMultiplier * (block.number - point0.blk)) / (block.timestamp - point0.ts);
         uint dblock = (block_slope * (_time - point0.ts)) / BlockMultiplier;
@@ -434,39 +444,39 @@ contract Reward {
     }
 
     /// @notice get claimable reward
-    function pendingReward(uint tokenId) public view returns (IntervalReward[] memory intervalRewards) {
-        uint end = epochInfo.length - 1;
-        if (block.timestamp <= epochInfo[epochInfo.length - 1].endTime) {
-            end = getCurrentEpochId();
+    function pendingReward(uint tokenId, uint start, uint end) public view returns (IntervalReward[] memory intervalRewards) {
+        uint current = getCurrentEpochId();
+        require(start <= end);
+        if (end > current) {
+            end = current;
         }
-        uint start = end > MaxQueryLength ? end - MaxQueryLength + 1 : 0;
         RewardInfo[] memory rewards = new RewardInfo[](end - start + 1);
         for (uint i = start; i <= end; i++) {
             if (block.timestamp < epochInfo[i].startTime) {
                 break;
             }
             (uint reward_i,) = pendingRewardSingle(tokenId, i);
-            rewards[i]=RewardInfo(i, reward_i);
+            rewards[i-start] = RewardInfo(i, reward_i);
         }
 
         // omit zero rewards and convert epoch list to intervals
         IntervalReward[] memory intervalRewards_0 = new IntervalReward[] (rewards.length);
         uint intv = 0;
-        uint intvStart = 0;
+        uint intvCursor = 0;
         uint sum = 0;
         for (uint i = 0; i < rewards.length; i++) {
             if (rewards[i].reward == 0) {
-                if (i != intvStart) {
-                    intervalRewards_0[intv] = IntervalReward(intvStart, i-1, sum);
+                if (i != intvCursor) {
+                    intervalRewards_0[intv] = IntervalReward(rewards[intvCursor].epochId, rewards[i-1].epochId, sum);
                     intv++;
                     sum = 0;
                 }
-                intvStart = i + 1;
+                intvCursor = i + 1;
                 continue;
             }
             sum += rewards[i].reward;
         }
-        intervalRewards_0[intv] = IntervalReward(intvStart, rewards.length-1, sum);
+        intervalRewards_0[intv] = IntervalReward(rewards[intvCursor].epochId, rewards[rewards.length-1].epochId, sum);
 
         intervalRewards = new IntervalReward[] (intv+1);
 
