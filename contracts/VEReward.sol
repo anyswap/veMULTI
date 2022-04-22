@@ -489,13 +489,19 @@ contract Reward {
             }
             sum += rewards[i].reward;
         }
-        intervalRewards_0[intv] = IntervalReward(rewards[intvCursor].epochId, rewards[rewards.length-1].epochId, sum);
-
-        intervalRewards = new IntervalReward[] (intv+1);
-
-        // Copy interval array
-        for (uint i = 0; i < intv+1; i++) {
-            intervalRewards[i] = intervalRewards_0[i];
+        if (sum > 0) {
+            intervalRewards_0[intv] = IntervalReward(rewards[intvCursor].epochId, rewards[rewards.length-1].epochId, sum);
+            intervalRewards = new IntervalReward[] (intv+1);
+            // Copy interval array
+            for (uint i = 0; i < intv+1; i++) {
+                intervalRewards[i] = intervalRewards_0[i];
+            }
+        } else {
+            intervalRewards = new IntervalReward[] (intv);
+            // Copy interval array
+            for (uint i = 0; i < intv; i++) {
+                intervalRewards[i] = intervalRewards_0[i];
+            }
         }
         
         return intervalRewards;
