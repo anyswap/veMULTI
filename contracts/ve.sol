@@ -488,7 +488,9 @@ contract ve is IERC721, IERC721Metadata {
     /// @dev Returns the address of the owner of the NFT.
     /// @param _tokenId The identifier for an NFT.
     function ownerOf(uint _tokenId) public view returns (address) {
-        return idToOwner[_tokenId];
+        address owner = idToOwner[_tokenId];
+        require(owner != address(0), "VE NFT: owner query for nonexistent token");
+        return owner;
     }
 
     /// @dev Get the approved address for a single NFT.
@@ -680,7 +682,8 @@ contract ve is IERC721, IERC721Metadata {
 
         if (_isContract(_to)) {
             // Throws if transfer destination is a contract which does not implement 'onERC721Received'
-            try IERC721Receiver(_to).onERC721Received(msg.sender, _from, _tokenId, _data) returns (bytes4) {} catch (
+            try IERC721Receiver(_to).onERC721Received(msg.sender, _from, _tokenId, _data) returns (bytes4 retval) {} catch (
+                require(retval == IERC721Receiver.onERC721Received.selector, "ERC721: transfer to non ERC721Receiver implementer")
                 bytes memory reason
             ) {
                 if (reason.length == 0) {
@@ -1092,10 +1095,10 @@ contract ve is IERC721, IERC721Metadata {
         // Both can have >= 0 amount
         _checkpoint(_tokenId, _locked, LockedBalance(0,0));
 
-        assert(IERC20(token).transfer(msg.sender, value));
-
         // Burn the NFT
         _burn(_tokenId);
+
+        assert(IERC20(token).transfer(msg.sender, value));
 
         emit Withdraw(msg.sender, _tokenId, value, block.timestamp);
         emit Supply(supply_before, supply_before - value);
@@ -1335,7 +1338,7 @@ contract ve is IERC721, IERC721Metadata {
         // Clear approval
         approve(address(0), _tokenId);
         // Remove token
-        _removeTokenFrom(msg.sender, _tokenId);
+        _removeTokenFrom(owner, _tokenId);
         emit Transfer(owner, address(0), _tokenId);
     }
 }
