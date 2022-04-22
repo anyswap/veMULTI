@@ -358,6 +358,7 @@ contract ve is IERC721, IERC721Metadata {
 
     address immutable public token;
     uint public supply;
+    uint public nftSupply;
     mapping(uint => LockedBalance) public locked;
 
     mapping(uint => uint) public ownership_change;
@@ -483,6 +484,10 @@ contract ve is IERC721, IERC721Metadata {
     /// @param _owner Address for whom to query the balance.
     function balanceOf(address _owner) external view returns (uint) {
         return _balance(_owner);
+    }
+
+    function totalNFTSupply() external view returns (uint) {
+        return nftSupply;
     }
 
     /// @dev Returns the address of the owner of the NFT.
@@ -761,6 +766,7 @@ contract ve is IERC721, IERC721Metadata {
         assert(_to != address(0));
         // Add NFT. Throws if `_tokenId` is owned by someone
         _addTokenTo(_to, _tokenId);
+        nftSupply++;
         emit Transfer(address(0), _to, _tokenId);
         return true;
     }
@@ -1339,6 +1345,7 @@ contract ve is IERC721, IERC721Metadata {
         approve(address(0), _tokenId);
         // Remove token
         _removeTokenFrom(owner, _tokenId);
+        nftSupply--;
         emit Transfer(owner, address(0), _tokenId);
     }
 }
