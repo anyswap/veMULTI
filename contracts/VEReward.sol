@@ -240,7 +240,7 @@ contract Reward {
 
         uint power = ve(_ve).balanceOfAtNFT(tokenId, epoch.startBlock);
         
-        uint reward = epoch.rewardPerSecond * (end - last) * power / epoch.totalPower / RewardMultiplier;
+        uint reward = epoch.rewardPerSecond * (end - last) * power / (epoch.totalPower * RewardMultiplier);
         return (reward, finished);
     }
 
@@ -273,6 +273,7 @@ contract Reward {
     }
 
     function claimRewardMany(uint[] calldata tokenIds, Interval[][] calldata intervals) public returns (uint[] memory rewards) {
+        require(tokenIds.length == intervals.length, "length not equal");
         rewards = new uint[] (tokenIds.length);
         for (uint i = 0; i < tokenIds.length; i++) {
             rewards[i] = claimReward(tokenIds[i], intervals[i]);
@@ -439,7 +440,7 @@ contract Reward {
             finished = true;
         }
         
-        reward = epoch.rewardPerSecond * (end - last) * power / totalPower / RewardMultiplier;
+        reward = epoch.rewardPerSecond * (end - last) * power / (totalPower * RewardMultiplier);
         return (reward, finished);
     }
 
