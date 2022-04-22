@@ -81,6 +81,7 @@ contract Reward {
     mapping(uint => mapping(uint => uint)) public userLastClaimTime; // tokenId -> epoch id -> last claim timestamp\
 
     address public admin;
+    address public pendingAdmin;
 
     modifier onlyAdmin() {
         require(msg.sender == admin);
@@ -90,6 +91,8 @@ contract Reward {
     event LogClaimReward(uint tokenId, uint reward);
     event LogAddEpoch(uint epochId, EpochInfo epochInfo);
     event LogAddEpoch(uint startTime, uint epochLength, uint epochCount, uint startEpochId);
+    event LogTransferAdmin(address pendingAdmin);
+    event LogAcceptAdmin(address admin);
 
     constructor (
         address _ve_,
@@ -153,7 +156,15 @@ contract Reward {
     }
 
     function transferAdmin(address _admin) external onlyAdmin {
-        admin = _admin;
+        pendingAdmin = _admin;
+        emit LogTransferAdmin(pendingAdmin);
+    }
+
+    function acceptAdmin() external {
+        require(msg.sender == pendingAdmin);
+        admin = pendingAdmin;
+        pendingAdmin = address(0);
+        emit LogAcceptAdmin(admin);
     }
 
     /// @notice add one epoch
