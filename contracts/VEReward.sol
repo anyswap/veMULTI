@@ -367,6 +367,9 @@ contract Reward {
     /// @return endTime
     /// @return totalReward
     function getEpochInfo(uint epochId) public view returns (uint, uint, uint) {
+        if (epochId >= epochInfo.length) {
+            return (0,0,0);
+        }
         EpochInfo memory epoch = epochInfo[epochId];
         uint totalReward = (epoch.endTime - epoch.startTime) * epoch.rewardPerSecond / RewardMultiplier;
         return (epoch.startTime, epoch.endTime, totalReward);
