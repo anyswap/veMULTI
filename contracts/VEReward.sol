@@ -89,7 +89,7 @@ contract Reward {
 
     event LogClaimReward(uint tokenId, uint reward);
     event LogAddEpoch(uint epochId, EpochInfo epochInfo);
-    event LogAddEpoch(uint startTime, uint endTime, uint epochLength, uint startEpochId);
+    event LogAddEpoch(uint startTime, uint epochLength, uint epochCount, uint startEpochId);
 
     constructor (
         address _ve_,
@@ -177,28 +177,26 @@ contract Reward {
     /// @return firstEpochId
     /// @return lastEpochId
     /// @return accurateTotalReward
-    function addEpochBatch(uint startTime, uint endTime, uint epochLength, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
-        assert(block.timestamp < endTime && startTime < endTime);
+    function addEpochBatch(uint startTime, uint epochLength, uint epochCount, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
         if (epochInfo.length > 0) {
             require(epochInfo[epochInfo.length - 1].endTime <= startTime);
         }
-        uint numberOfEpoch = (endTime + 1 - startTime) / epochLength;
-        uint _reward = totalReward / numberOfEpoch;
-        uint _start = startTime;
-        uint _end;
+        uint _reward = totalReward / epochCount;
         uint _epochId;
         uint accurateTR;
-        for (uint i = 0; i < numberOfEpoch; i++) {
-            _end = _start + epochLength;
+        uint _start = startTime;
+        uint _end = _start + epochLength;
+        for (uint i = 0; i < epochCount; i++) {
             (_epochId, accurateTR) = _addEpoch(_start, _end, _reward);
             _start = _end;
+            _end = _start + epochLength;
         }
         uint lastPointTime = point_history[point_history.length - 1].ts;
         if (lastPointTime < block.timestamp) {
             addCheckpoint();
         }
-        emit LogAddEpoch(startTime, _end, epochLength, _epochId + 1 - numberOfEpoch);
-        return (_epochId + 1 - numberOfEpoch, _epochId, accurateTR * numberOfEpoch);
+        emit LogAddEpoch(startTime, epochLength, epochCount, _epochId + 1 - epochLength);
+        return (_epochId + 1 - epochLength, _epochId, accurateTR * epochLength);
     }
 
     /// @notice add one epoch
