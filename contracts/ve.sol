@@ -1343,7 +1343,7 @@ contract ve is IERC721, IERC721Metadata {
         address owner = ownerOf(_tokenId);
 
         // Clear approval
-        approve(address(0), _tokenId);
+        _clearApproval(owner, _tokenId);
         // Remove token
         _removeTokenFrom(owner, _tokenId);
         nftSupply--;
