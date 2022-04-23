@@ -427,7 +427,7 @@ contract Reward {
     /// @notice
     /// Current epoch reward is inaccurate
     /// because the checkpoint may not have been added.
-    function pendingRewardSingle(uint tokenId, uint epochId) public view returns (uint reward, bool finished) {
+    function getPendingRewardSingle(uint tokenId, uint epochId) public view returns (uint reward, bool finished) {
         if (epochId > getCurrentEpochId()) {
             return (0, false);
         }
@@ -468,7 +468,7 @@ contract Reward {
             if (block.timestamp < epochInfo[i].startTime) {
                 break;
             }
-            (uint reward_i,) = pendingRewardSingle(tokenId, i);
+            (uint reward_i,) = getPendingRewardSingle(tokenId, i);
             rewards[i-start] = RewardInfo(i, reward_i);
         }
 
