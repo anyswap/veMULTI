@@ -189,6 +189,7 @@ contract Reward {
     /// @return lastEpochId
     /// @return accurateTotalReward
     function addEpochBatch(uint startTime, uint epochLength, uint epochCount, uint totalReward) external onlyAdmin returns(uint, uint, uint) {
+        require(block.timestamp < startTime + epochLength);
         if (epochInfo.length > 0) {
             require(epochInfo[epochInfo.length - 1].endTime <= startTime);
         }
