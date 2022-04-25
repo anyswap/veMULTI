@@ -1,7 +1,3 @@
-/**
- *Submitted for verification at BscScan.com on 2022-04-14
-*/
-
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.11;
 
@@ -207,8 +203,8 @@ contract Reward {
         if (lastPointTime < block.timestamp) {
             addCheckpoint();
         }
-        emit LogAddEpoch(startTime, epochLength, epochCount, _epochId + 1 - epochLength);
-        return (_epochId + 1 - epochLength, _epochId, accurateTR * epochLength);
+        emit LogAddEpoch(startTime, epochLength, epochCount, _epochId + 1 - epochCount);
+        return (_epochId + 1 - epochCount, _epochId, accurateTR * epochCount);
     }
 
     /// @notice add one epoch
